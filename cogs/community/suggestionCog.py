@@ -25,6 +25,7 @@ from features.community.suggestions import (
     setSuggestionThreadId,
     updateSuggestionStatus,
 )
+from features.community.suggestions.service import addSuggestionToFreedcamp
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
 
@@ -364,6 +365,21 @@ class SuggestionCog(commands.Cog):
                     )
                 except (discord.Forbidden, discord.HTTPException):
                     pass
+            if newStatus == "APPROVED":
+                suggestionText = str(row.get("content"))
+                jumpUrl = f"https://discord.com/channels/{interaction.guild.id}/{row.get("threadId")}"
+                content = f"{suggestionText}\n\nJump to discussion: {jumpUrl}"
+                try:
+                    await addSuggestionToFreedcamp(
+                        suggestionId=suggestionId,
+                        submitterId=int(row.get("submitterId") or 0),
+                        content=content,
+                        apiKey=str(getattr(config, "freedcampApiKey", "") or "").strip(),
+                        projectId=int(getattr(config, "freedcampProjectId", 0) or 0),
+                        taskGroupId=int(getattr(config, "freedcampTaskGroupId", 0) or 0),
+                    )
+                except Exception:
+                    log.exception("Failed to add suggestion #%s to Freedcamp.", suggestionId)
         await interactionRuntime.safeInteractionReply(
             interaction,
             content=f"Suggestion #{int(suggestionId)} marked {str(newStatus or '').strip().title()}.",

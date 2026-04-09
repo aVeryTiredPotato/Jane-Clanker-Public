@@ -38,6 +38,10 @@ robloxInventoryApiKey = _envText("ROBLOX_INVENTORY_API_KEY", robloxOpenCloudApiK
 
 skinCooldownBypassRoleIds = []
 
+freedcampApiKey = _envText("FREEDCAMP_API_KEY")
+freedcampProjectId = 0
+freedcampTaskGroupId = 0
+
 # == Command Access / Runtime ==
 # Allowed servers for command usage.
 allowedCommandGuildIds = []

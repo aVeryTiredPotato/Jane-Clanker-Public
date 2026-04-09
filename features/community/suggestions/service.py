@@ -2,11 +2,53 @@ from __future__ import annotations
 
 import json
 
+import aiohttp
+
 from db.sqlite import execute, executeReturnId, fetchAll, fetchOne
 
 
 def _normalizeText(value: object) -> str:
     return str(value or "").strip()
+
+async def _getHttpSession() -> aiohttp.ClientSession:
+    global _httpSession
+    if _httpSession is None or _httpSession.closed:
+        timeout = aiohttp.ClientTimeout(total=10)
+        _httpSession = aiohttp.ClientSession(timeout=timeout)
+    return _httpSession
+
+async def addSuggestionToFreedcamp(
+    *,
+    suggestionId: int,
+    submitterId: int,
+    content: str,
+    apiKey: str,
+    projectId: int,
+    taskGroupId: int,
+) -> dict:
+    
+    session = await _getHttpSession()
+    json = {
+        "project_id": projectId,
+        "task_group_id": taskGroupId,
+        "title": f"Suggestion #{suggestionId} from User {submitterId}",
+        "description": content,
+        "priority": 0,
+        "assigned_to_id": 0,
+    }
+    headers = {"Content-Type": "application/json", "X-API-KEY": apiKey}
+
+    async with session.post(
+        "https://freedcamp.com/api/v1/tasks/",
+        json=json,
+        headers=headers,
+    ) as response:
+        if response.status != 200:
+            raise Exception(f"Freedcamp API request failed with status {response.status}: {response.reason}")
+        return await response.json()
+
+    return json.loads(response.read())
+
 
 
 async def createSuggestion(
