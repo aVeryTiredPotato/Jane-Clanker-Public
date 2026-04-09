@@ -190,6 +190,7 @@ welcomeMessageTemplate = "Welcome to **{guild}**, {mention}."
 publicRoleMenus = {}
 
 suggestionChannelId = 0
+suggestionForumChannelId = 0
 suggestionReviewerRoleIds = []
 
 
