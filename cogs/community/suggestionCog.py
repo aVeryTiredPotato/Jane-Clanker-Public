@@ -25,7 +25,7 @@ from features.community.suggestions import (
     setSuggestionThreadId,
     updateSuggestionStatus,
 )
-from features.community.suggestions.service import addSuggestionToFreedcamp
+from features.community.suggestions.service import addSuggestionToFreedcamp, setSuggestionFreedcampId
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
 
@@ -370,7 +370,7 @@ class SuggestionCog(commands.Cog):
                 jumpUrl = f"https://discord.com/channels/{interaction.guild.id}/{row.get("threadId")}"
                 content = f"{suggestionText}\n\nJump to discussion: {jumpUrl}"
                 try:
-                    await addSuggestionToFreedcamp(
+                    id = await addSuggestionToFreedcamp(
                         suggestionId=suggestionId,
                         submitterId=int(row.get("submitterId") or 0),
                         content=content,
@@ -378,8 +378,19 @@ class SuggestionCog(commands.Cog):
                         projectId=int(getattr(config, "freedcampProjectId", 0) or 0),
                         taskGroupId=int(getattr(config, "freedcampTaskGroupId", 0) or 0),
                     )
+                    await setSuggestionFreedcampId(suggestionId, int(id))
+                    url = f"https://freedcamp.com/view/{getattr(config, 'freedcampProjectId', 0)}/tasks/{id}"
+                    if isinstance(targetThread, discord.Thread):
+                        try:
+                            await targetThread.send(
+                                f"Suggestion added to Freedcamp: {url}",
+                                allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+                            )
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
                 except Exception:
                     log.exception("Failed to add suggestion #%s to Freedcamp.", suggestionId)
+                
         await interactionRuntime.safeInteractionReply(
             interaction,
             content=f"Suggestion #{int(suggestionId)} marked {str(newStatus or '').strip().title()}.",

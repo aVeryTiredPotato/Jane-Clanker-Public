@@ -47,8 +47,8 @@ async def addSuggestionToFreedcamp(
             raise Exception(f"Freedcamp API request failed with status {response.status}: {response.reason}")
         return await response.json()
 
-    return json.loads(response.read())
-
+    id = json.loads(response.read()).get("data").get("tasks")[0].get("id") or ""
+    return id
 
 
 async def createSuggestion(
@@ -102,6 +102,16 @@ async def setSuggestionThreadId(suggestionId: int, threadId: int) -> None:
         WHERE suggestionId = ?
         """,
         (int(threadId), int(suggestionId)),
+    )
+
+async def setSuggestionFreedcampId(suggestionId: int, freedcampId: int) -> None:
+    await execute(
+        """
+        UPDATE suggestions
+        SET freedcampId = ?, updatedAt = datetime('now')
+        WHERE suggestionId = ?
+        """,
+        (int(freedcampId), int(suggestionId)),
     )
 
 

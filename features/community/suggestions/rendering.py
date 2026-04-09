@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import discord
-
+import config
 
 def _discordTimestamp(value: object, style: str = "f") -> str:
     raw = str(value or "").strip()
@@ -36,6 +36,7 @@ def buildSuggestionEmbed(row: dict) -> discord.Embed:
     reviewerId = int(row.get("reviewerId") or 0)
     anonymous = bool(int(row.get("anonymous") or 0))
     threadId = int(row.get("threadId") or 0)
+    freedcampId = int(row.get("freedcampId") or 0)
 
     embed = discord.Embed(
         title=f"Suggestion #{suggestionId}",
@@ -58,6 +59,8 @@ def buildSuggestionEmbed(row: dict) -> discord.Embed:
         embed.add_field(name="Review Note", value=reviewNote[:1024], inline=False)
     if threadId > 0:
         embed.add_field(name="Discussion Thread", value=f"<#{threadId}>", inline=False)
+    if freedcampId > 0:
+        embed.add_field(name="Freedcamp Task", value=f"https://freedcamp.com/view/{getattr(config, 'freedcampProjectId', 0)}/tasks/{freedcampId}", inline=False)
     embed.set_footer(text="Community suggestion")
     return embed
 
