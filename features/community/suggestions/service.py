@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-
+from typing import Optional
+import pdb
 import aiohttp
 
 from db.sqlite import execute, executeReturnId, fetchAll, fetchOne
 
+_httpSession: Optional[aiohttp.ClientSession] = None
 
 def _normalizeText(value: object) -> str:
     return str(value or "").strip()
@@ -25,7 +27,7 @@ async def addSuggestionToFreedcamp(
     apiKey: str,
     projectId: int,
     taskGroupId: int,
-) -> dict:
+) -> int:
     
     session = await _getHttpSession()
     json = {
@@ -45,10 +47,8 @@ async def addSuggestionToFreedcamp(
     ) as response:
         if response.status != 200:
             raise Exception(f"Freedcamp API request failed with status {response.status}: {response.reason}")
-        return await response.json()
-
-    id = json.loads(response.read()).get("data").get("tasks")[0].get("id") or ""
-    return id
+        responseObj = await response.json()
+        return responseObj.get("data").get("tasks")[0].get("id")
 
 
 async def createSuggestion(

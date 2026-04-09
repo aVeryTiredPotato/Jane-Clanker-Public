@@ -73,7 +73,7 @@ class SuggestionCog(commands.Cog):
     async def _getMessageChannel(self, channelId: int) -> discord.TextChannel | discord.Thread | None:
         if int(channelId) <= 0:
             return None
-        channel = self.bot.get_channel(int(channelId))
+        channel = self.bot.get_channel(int(00))
         if channel is None:
             try:
                 channel = await self.bot.fetch_channel(int(channelId))
@@ -82,18 +82,31 @@ class SuggestionCog(commands.Cog):
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             return channel
         return None
+    
+    async def _getForumChannel(self, channelId: int) -> discord.ForumChannel | None:
+        if int(channelId) <= 0:
+            return None
+        channel = self.bot.get_channel(int(channelId))
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(int(channelId))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return None
+        if isinstance(channel, discord.ForumChannel):
+            return channel
+        return None
 
     async def _resolveSuggestionChannel(
         self,
         guild: discord.Guild,
-        fallbackChannel: discord.ForumChannel | None,
-    ) -> discord.ForumChannel | None:
+        fallbackChannel: discord.GuildChannel | discord.Thread | None,
+    ) -> discord.TextChannel | discord.Thread | None:
         configuredId = int(getattr(config, "suggestionChannelId", 0) or 0)
         if configuredId > 0:
             channel = await self._getMessageChannel(configuredId)
             if channel is not None:
                 return channel
-        if isinstance(fallbackChannel, discord.ForumChannel):
+        if isinstance(fallbackChannel, (discord.TextChannel, discord.Thread)):
             return fallbackChannel
         return None
     
@@ -104,7 +117,7 @@ class SuggestionCog(commands.Cog):
     ) -> discord.ForumChannel | None:
         configuredId = int(getattr(config, "suggestionForumChannelId", 0) or 0)
         if configuredId > 0:
-            channel = await self._getMessageChannel(configuredId)
+            channel = await self._getForumChannel(configuredId)
             if channel is not None:
                 return channel
         if isinstance(fallbackChannel, discord.ForumChannel):
@@ -148,7 +161,7 @@ class SuggestionCog(commands.Cog):
                 log.exception("Failed refreshing suggestion boards for guild %s.", guild.id)
 
     async def _createThread(self, channelId: int, suggestionText: str) -> discord.ForumThread | None:
-        channel = await self._getMessageChannel(channelId)
+        channel = await self._getForumChannel(channelId)
         if not isinstance(channel, discord.ForumChannel):
             return None
         try:
@@ -201,12 +214,12 @@ class SuggestionCog(commands.Cog):
             await self._safeEphemeral(interaction, "I could not find a valid suggestion channel.")
             return
         
-        targetForum = await self._resolveSuggestionForumChannel(interaction.guild)
+        targetForum = await self._resolveSuggestionForumChannel(interaction.guild, None)
         if targetForum is None:
             await self._safeEphemeral(interaction, "I could not find a valid suggestion forum.")
             return
 
-        targetThread = await self._createThread(targetForum.id, suggestion_text)
+        [targetThread, _] = await self._createThread(targetForum.id, suggestion_text)
 
         suggestionId = await createSuggestion(
             guildId=int(interaction.guild.id),
@@ -215,7 +228,8 @@ class SuggestionCog(commands.Cog):
             content=str(suggestion_text or "").strip(),
             anonymous=bool(anonymous),
         )
-        await setSuggestionThreadId(suggestionId, targetThread.id)
+        if targetThread is not None:
+            await setSuggestionThreadId(suggestionId, targetThread.id)
         row = await getSuggestion(suggestionId)
         if row is None:
             await self._safeEphemeral(interaction, "Suggestion creation failed.")
@@ -378,6 +392,7 @@ class SuggestionCog(commands.Cog):
                         projectId=int(getattr(config, "freedcampProjectId", 0) or 0),
                         taskGroupId=int(getattr(config, "freedcampTaskGroupId", 0) or 0),
                     )
+                    print(id)
                     await setSuggestionFreedcampId(suggestionId, int(id))
                     url = f"https://freedcamp.com/view/{getattr(config, 'freedcampProjectId', 0)}/tasks/{id}"
                     if isinstance(targetThread, discord.Thread):
