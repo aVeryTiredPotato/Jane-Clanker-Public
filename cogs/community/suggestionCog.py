@@ -383,16 +383,17 @@ class SuggestionCog(commands.Cog):
                 suggestionText = str(row.get("content"))
                 jumpUrl = f"https://discord.com/channels/{interaction.guild.id}/{row.get("threadId")}"
                 content = f"{suggestionText}\n\nJump to discussion: {jumpUrl}"
+                name =  self.bot.get_user(int(row.get("submitterId") or 0)).display_name if int(row.get("submitterId") or 0) > 0 else "Unknown"
                 try:
                     id = await addSuggestionToFreedcamp(
                         suggestionId=suggestionId,
-                        submitterId=int(row.get("submitterId") or 0),
+                        submitterName=name,
                         content=content,
                         apiKey=str(getattr(config, "freedcampApiKey", "") or "").strip(),
+                        keySecret=str(getattr(config, "freedcampSecret", "") or "").strip(),
                         projectId=int(getattr(config, "freedcampProjectId", 0) or 0),
                         taskGroupId=int(getattr(config, "freedcampTaskGroupId", 0) or 0),
                     )
-                    print(id)
                     await setSuggestionFreedcampId(suggestionId, int(id))
                     url = f"https://freedcamp.com/view/{getattr(config, 'freedcampProjectId', 0)}/tasks/{id}"
                     if isinstance(targetThread, discord.Thread):

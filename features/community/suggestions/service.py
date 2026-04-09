@@ -5,6 +5,11 @@ from typing import Optional
 import pdb
 import aiohttp
 
+import hashlib
+import hmac
+import base64
+import time
+
 from db.sqlite import execute, executeReturnId, fetchAll, fetchOne
 
 _httpSession: Optional[aiohttp.ClientSession] = None
@@ -19,31 +24,53 @@ async def _getHttpSession() -> aiohttp.ClientSession:
         _httpSession = aiohttp.ClientSession(timeout=timeout)
     return _httpSession
 
+
+
+def make_digest(message, key):
+    
+    key = bytes(key, 'UTF-8')
+    message = bytes(message, 'UTF-8')
+    
+    digester = hmac.new(key, message, hashlib.sha1)
+    signature1 = digester.digest() 
+    
+    return signature1.hex()
+
+
 async def addSuggestionToFreedcamp(
     *,
     suggestionId: int,
-    submitterId: int,
+    submitterName: str,
     content: str,
     apiKey: str,
+    keySecret: str,
     projectId: int,
     taskGroupId: int,
 ) -> int:
     
     session = await _getHttpSession()
+    ts = str(int(1000*time.time()))
+    toHash = apiKey + ts
+    keyHash = make_digest(toHash, keySecret)
+    data = {
+        "api_key": apiKey,
+        "timestamp": ts,
+        "hash": keyHash,
+    }
     json = {
         "project_id": projectId,
         "task_group_id": taskGroupId,
-        "title": f"Suggestion #{suggestionId} from User {submitterId}",
+        "title": f"Suggestion #{suggestionId} from User {submitterName}",
         "description": content,
         "priority": 0,
         "assigned_to_id": 0,
     }
-    headers = {"Content-Type": "application/json", "X-API-KEY": apiKey}
-
+    headers = {"Content-Type": "application/json"}
     async with session.post(
         "https://freedcamp.com/api/v1/tasks/",
         json=json,
         headers=headers,
+        params=data,
     ) as response:
         if response.status != 200:
             raise Exception(f"Freedcamp API request failed with status {response.status}: {response.reason}")
