@@ -39,6 +39,7 @@ robloxInventoryApiKey = _envText("ROBLOX_INVENTORY_API_KEY", robloxOpenCloudApiK
 skinCooldownBypassRoleIds = []
 
 freedcampApiKey = _envText("FREEDCAMP_API_KEY")
+freedcampSecret = _envText("FREEDCAMP_SECRET")
 freedcampProjectId = 0
 freedcampTaskGroupId = 0
 
