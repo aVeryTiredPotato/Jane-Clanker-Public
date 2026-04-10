@@ -10,6 +10,8 @@ import hmac
 import base64
 import time
 
+import aiohttp
+
 from db.sqlite import execute, executeReturnId, fetchAll, fetchOne
 
 _httpSession: Optional[aiohttp.ClientSession] = None

@@ -106,7 +106,21 @@ class SuggestionCog(commands.Cog):
             channel = await self._getMessageChannel(configuredId)
             if channel is not None:
                 return channel
-        if isinstance(fallbackChannel, (discord.TextChannel, discord.Thread)):
+        if isinstance(fallbackChannel, discord.ForumChannel):
+            return fallbackChannel
+        return None
+    
+    async def _resolveSuggestionForumChannel(
+        self,
+        guild: discord.Guild,
+        fallbackChannel: discord.ForumChannel | None,
+    ) -> discord.ForumChannel | None:
+        configuredId = int(getattr(config, "suggestionForumChannelId", 0) or 0)
+        if configuredId > 0:
+            channel = await self._getMessageChannel(configuredId)
+            if channel is not None:
+                return channel
+        if isinstance(fallbackChannel, discord.ForumChannel):
             return fallbackChannel
         return None
     
