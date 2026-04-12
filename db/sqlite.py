@@ -9,7 +9,7 @@ _dbConn: Optional[aiosqlite.Connection] = None
 _dbConnInitLock = asyncio.Lock()
 _dbWriteLock = asyncio.Lock()
 log = logging.getLogger(__name__)
-_schemaVersionTarget = 11
+_schemaVersionTarget = 12
 _T = TypeVar("_T")
 
 
@@ -878,6 +878,18 @@ async def initDb():
         );
         """)
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS reaction_role_entries (
+            entryId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL,
+            messageId INTEGER NOT NULL,
+            emojiKey TEXT NOT NULL,
+            roleId INTEGER NOT NULL,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(messageId, emojiKey)
+        );
+        """)
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS retry_jobs (
             jobId INTEGER PRIMARY KEY AUTOINCREMENT,
             jobType TEXT NOT NULL,
@@ -975,6 +987,8 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_workflow_runs_subject ON workflow_runs(subjectType, subjectId)",
             "CREATE INDEX IF NOT EXISTS idx_workflow_events_run_created ON workflow_events(runId, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_workflow_events_subject_created ON workflow_events(subjectType, subjectId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_reaction_roles_message ON reaction_role_entries(messageId)",
+            "CREATE INDEX IF NOT EXISTS idx_reaction_roles_guild_channel ON reaction_role_entries(guildId, channelId)",
             "CREATE INDEX IF NOT EXISTS idx_retry_jobs_status_next ON retry_jobs(status, nextAttemptAt)",
             "CREATE INDEX IF NOT EXISTS idx_retry_jobs_type_status ON retry_jobs(jobType, status, updatedAt)",
         )
