@@ -735,6 +735,7 @@ async def initDb():
             content TEXT NOT NULL,
             anonymous INTEGER NOT NULL DEFAULT 0,
             threadId INTEGER,
+            freedcampId INTEGER,
             status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING/APPROVED/REJECTED/IMPLEMENTED
             reviewerId INTEGER,
             reviewNote TEXT,
@@ -746,6 +747,7 @@ async def initDb():
         for statement in (
             "ALTER TABLE suggestions ADD COLUMN anonymous INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE suggestions ADD COLUMN threadId INTEGER",
+            "ALTER TABLE suggestions ADD COLUMN freedcampId INTEGER",
         ):
             await _executeOptional(statement)
         await db.execute("""

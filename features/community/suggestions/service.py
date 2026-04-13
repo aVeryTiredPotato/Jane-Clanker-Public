@@ -1,12 +1,79 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import time
+from typing import Optional
+
+import aiohttp
 
 from db.sqlite import execute, executeReturnId, fetchAll, fetchOne
+
+_httpSession: Optional[aiohttp.ClientSession] = None
 
 
 def _normalizeText(value: object) -> str:
     return str(value or "").strip()
+
+
+async def _getHttpSession() -> aiohttp.ClientSession:
+    global _httpSession
+    if _httpSession is None or _httpSession.closed:
+        timeout = aiohttp.ClientTimeout(total=10)
+        _httpSession = aiohttp.ClientSession(timeout=timeout)
+    return _httpSession
+
+
+def make_digest(message: str, key: str) -> str:
+    keyBytes = bytes(str(key or ""), "UTF-8")
+    messageBytes = bytes(str(message or ""), "UTF-8")
+    digester = hmac.new(keyBytes, messageBytes, hashlib.sha1)
+    return digester.digest().hex()
+
+
+async def addSuggestionToFreedcamp(
+    *,
+    suggestionId: int,
+    submitterName: str,
+    content: str,
+    apiKey: str,
+    keySecret: str,
+    projectId: int,
+    taskGroupId: int,
+) -> int:
+    normalizedApiKey = _normalizeText(apiKey)
+    normalizedSecret = _normalizeText(keySecret)
+    if not normalizedApiKey or not normalizedSecret or int(projectId or 0) <= 0 or int(taskGroupId or 0) <= 0:
+        raise ValueError("Freedcamp is not configured.")
+
+    session = await _getHttpSession()
+    timestamp = str(int(1000 * time.time()))
+    authParams = {
+        "api_key": normalizedApiKey,
+        "timestamp": timestamp,
+        "hash": make_digest(normalizedApiKey + timestamp, normalizedSecret),
+    }
+    payload = {
+        "project_id": int(projectId),
+        "task_group_id": int(taskGroupId),
+        "title": f"Suggestion #{int(suggestionId)} from User {_normalizeText(submitterName) or 'Unknown'}",
+        "description": str(content or ""),
+        "priority": 0,
+        "assigned_to_id": 0,
+    }
+    headers = {"Content-Type": "application/json"}
+    async with session.post(
+        "https://freedcamp.com/api/v1/tasks/",
+        json=payload,
+        headers=headers,
+        params=authParams,
+    ) as response:
+        if response.status != 200:
+            raise RuntimeError(f"Freedcamp API request failed with status {response.status}: {response.reason}")
+        responseObj = await response.json(content_type=None)
+        taskId = ((responseObj.get("data") or {}).get("tasks") or [{}])[0].get("id")
+        return int(taskId or 0)
 
 
 async def createSuggestion(
@@ -60,6 +127,17 @@ async def setSuggestionThreadId(suggestionId: int, threadId: int) -> None:
         WHERE suggestionId = ?
         """,
         (int(threadId), int(suggestionId)),
+    )
+
+
+async def setSuggestionFreedcampId(suggestionId: int, freedcampId: int) -> None:
+    await execute(
+        """
+        UPDATE suggestions
+        SET freedcampId = ?, updatedAt = datetime('now')
+        WHERE suggestionId = ?
+        """,
+        (int(freedcampId), int(suggestionId)),
     )
 
 

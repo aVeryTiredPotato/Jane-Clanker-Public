@@ -90,15 +90,27 @@ Each mirror embed footer includes:
 
 Keep that footer stable. It is used to recover existing mirrors if stored message IDs are stale.
 
+The summary panel is intentionally re-sent instead of edited after live mirror activity. Jane sends the fresh summary to the bottom, then deletes the previous summary card.
+
 ## Backfill
 
 Backfill runs at startup through `syncRecentMessages()`.
+
+After startup backfill, Jane checks the latest archive message. If the latest message is already the summary panel, she leaves it alone and records that message ID. If anything else is below it, she re-sends the summary to the bottom.
 
 Manual backfill uses:
 
 - `!mirrortraininghistory`
 
-Backfill scans oldest-first after the cutoff date. Individual message failures are logged and skipped, because one cursed old post should not ruin the whole history scan.
+Backfill scans oldest-first after the cutoff date. Before creating any mirror messages, Jane scans the archive channel for existing mirror footers. If a source message ID is already present in the archive, Jane records that mirror ID and refuses to send the log again.
+
+Normal restart backfill does not create missing mirror messages. It only stores parsed rows, reconnects known mirror IDs, and keeps the summary panel at the bottom.
+
+Manual backfill can create missing mirror messages for source results that are not already in the archive index. If the archive scan fails, manual backfill still stores parsed rows, but it will not create mirror messages. That is intentional. Not duplicating a year's worth of logs is more important than guessing.
+
+If Jane has a stored mirror message ID but cannot fetch that mirror later, she does not create a replacement copy. The source row stays stored, but the archive is not spammed with duplicates.
+
+Individual message failures are logged and skipped, because one cursed old post should not ruin the whole history scan.
 
 Progress is logged every 50 scanned messages.
 

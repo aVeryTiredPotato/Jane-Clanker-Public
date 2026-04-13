@@ -25,6 +25,7 @@ from features.community.suggestions import (
     setSuggestionThreadId,
     updateSuggestionStatus,
 )
+from features.community.suggestions.service import addSuggestionToFreedcamp, setSuggestionFreedcampId
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
 
@@ -82,6 +83,19 @@ class SuggestionCog(commands.Cog):
             return channel
         return None
 
+    async def _getForumChannel(self, channelId: int) -> discord.ForumChannel | None:
+        if int(channelId) <= 0:
+            return None
+        channel = self.bot.get_channel(int(channelId))
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(int(channelId))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return None
+        if isinstance(channel, discord.ForumChannel):
+            return channel
+        return None
+
     async def _resolveSuggestionChannel(
         self,
         guild: discord.Guild,
@@ -93,6 +107,20 @@ class SuggestionCog(commands.Cog):
             if channel is not None:
                 return channel
         if isinstance(fallbackChannel, (discord.TextChannel, discord.Thread)):
+            return fallbackChannel
+        return None
+
+    async def _resolveSuggestionForumChannel(
+        self,
+        guild: discord.Guild,
+        fallbackChannel: discord.abc.GuildChannel | discord.Thread | None,
+    ) -> discord.ForumChannel | None:
+        configuredId = int(getattr(config, "suggestionForumChannelId", 0) or 0)
+        if configuredId > 0:
+            channel = await self._getForumChannel(configuredId)
+            if channel is not None:
+                return channel
+        if isinstance(fallbackChannel, discord.ForumChannel):
             return fallbackChannel
         return None
 
@@ -151,6 +179,41 @@ class SuggestionCog(commands.Cog):
             pass
         return int(thread.id)
 
+    def _suggestionForumTags(self, channel: discord.ForumChannel) -> list[discord.ForumTag]:
+        return [
+            tag
+            for tag in list(getattr(channel, "available_tags", []) or [])
+            if str(getattr(tag, "name", "") or "").strip().casefold() == "suggestion"
+        ][:1]
+
+    async def _createForumThread(self, channel: discord.ForumChannel, suggestionText: str) -> discord.Thread | None:
+        try:
+            created = await channel.create_thread(
+                name=(str(suggestionText or "").strip() or "Suggestion")[:100],
+                content=str(suggestionText or "").strip() or "(empty suggestion)",
+                applied_tags=self._suggestionForumTags(channel),
+                allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            return None
+        thread = getattr(created, "thread", None)
+        return thread if isinstance(thread, discord.Thread) else None
+
+    def _freedcampConfigured(self) -> bool:
+        return (
+            bool(str(getattr(config, "freedcampApiKey", "") or "").strip())
+            and bool(str(getattr(config, "freedcampSecret", "") or "").strip())
+            and int(getattr(config, "freedcampProjectId", 0) or 0) > 0
+            and int(getattr(config, "freedcampTaskGroupId", 0) or 0) > 0
+        )
+
+    def _displayNameForUser(self, guild: discord.Guild, userId: int) -> str:
+        member = guild.get_member(int(userId or 0))
+        if member is not None:
+            return str(member.display_name or member.name or "Unknown")
+        user = self.bot.get_user(int(userId or 0))
+        return str(getattr(user, "display_name", None) or getattr(user, "name", None) or "Unknown")
+
     async def _restoreSuggestionViews(self) -> int:
         restored = 0
         for row in await listPendingSuggestions():
@@ -190,6 +253,7 @@ class SuggestionCog(commands.Cog):
         if targetChannel is None:
             await self._safeEphemeral(interaction, "I could not find a valid suggestion channel.")
             return
+        targetForum = await self._resolveSuggestionForumChannel(interaction.guild, interaction.channel)
 
         suggestionId = await createSuggestion(
             guildId=int(interaction.guild.id),
@@ -198,6 +262,11 @@ class SuggestionCog(commands.Cog):
             content=str(suggestion_text or "").strip(),
             anonymous=bool(anonymous),
         )
+        targetThread: discord.Thread | None = None
+        if targetForum is not None:
+            targetThread = await self._createForumThread(targetForum, suggestion_text)
+        if targetThread is not None:
+            await setSuggestionThreadId(suggestionId, int(targetThread.id))
         row = await getSuggestion(suggestionId)
         if row is None:
             await self._safeEphemeral(interaction, "Suggestion creation failed.")
@@ -212,10 +281,13 @@ class SuggestionCog(commands.Cog):
         await sentMessage.add_reaction("👍")
         await sentMessage.add_reaction("👎")
         await setSuggestionMessageId(suggestionId, int(sentMessage.id))
-        threadId = await self._createDiscussionThread(sentMessage, suggestionId=suggestionId)
-        if threadId > 0:
-            await setSuggestionThreadId(suggestionId, threadId)
-            row = await getSuggestion(suggestionId) or row
+        if targetThread is None:
+            threadId = await self._createDiscussionThread(sentMessage, suggestionId=suggestionId)
+            if threadId > 0:
+                await setSuggestionThreadId(suggestionId, threadId)
+        latestRow = await getSuggestion(suggestionId)
+        if int((latestRow or {}).get("threadId") or 0) > 0:
+            row = latestRow or row
             await interactionRuntime.safeMessageEdit(sentMessage, embed=buildSuggestionEmbed(row), view=view)
         self.bot.add_view(view, message_id=int(sentMessage.id))
         await self._refreshSuggestionBoards(interaction.guild)
@@ -341,6 +413,55 @@ class SuggestionCog(commands.Cog):
                     view=self._buildReviewView(refreshed),
                 )
             await self._refreshSuggestionBoards(interaction.guild)
+            threadId = int(refreshed.get("threadId") or 0)
+            targetThread = await self._getMessageChannel(threadId)
+            if isinstance(targetThread, discord.Thread):
+                try:
+                    await targetThread.send(
+                        f"Suggestion #{suggestionId} marked {str(newStatus or '').strip().title()} by {interaction.user.mention}."
+                        + (f" Note: {reviewNote}" if reviewNote else ""),
+                        allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            if str(newStatus or "").strip().upper() == "APPROVED" and self._freedcampConfigured():
+                jumpUrl = f"https://discord.com/channels/{interaction.guild.id}/{threadId}" if threadId > 0 else ""
+                content = str(row.get("content") or "").strip()
+                if jumpUrl:
+                    content = f"{content}\n\nJump to discussion: {jumpUrl}"
+                try:
+                    freedcampId = await addSuggestionToFreedcamp(
+                        suggestionId=suggestionId,
+                        submitterName=self._displayNameForUser(interaction.guild, int(row.get("submitterId") or 0)),
+                        content=content,
+                        apiKey=str(getattr(config, "freedcampApiKey", "") or "").strip(),
+                        keySecret=str(getattr(config, "freedcampSecret", "") or "").strip(),
+                        projectId=int(getattr(config, "freedcampProjectId", 0) or 0),
+                        taskGroupId=int(getattr(config, "freedcampTaskGroupId", 0) or 0),
+                    )
+                    if int(freedcampId or 0) > 0:
+                        await setSuggestionFreedcampId(suggestionId, int(freedcampId))
+                        freedcampUrl = (
+                            f"https://freedcamp.com/view/{int(getattr(config, 'freedcampProjectId', 0) or 0)}"
+                            f"/tasks/{int(freedcampId)}"
+                        )
+                        if isinstance(targetThread, discord.Thread):
+                            try:
+                                await targetThread.send(
+                                    f"Suggestion added to Freedcamp: {freedcampUrl}",
+                                    allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+                                )
+                            except (discord.Forbidden, discord.HTTPException):
+                                pass
+                        refreshedWithTask = await getSuggestion(suggestionId)
+                        if refreshedWithTask is not None and targetMessage is not None:
+                            await interactionRuntime.safeMessageEdit(
+                                targetMessage,
+                                embed=buildSuggestionEmbed(refreshedWithTask),
+                                view=self._buildReviewView(refreshedWithTask),
+                            )
+                except Exception:
+                    log.exception("Failed to add suggestion #%s to Freedcamp.", suggestionId)
         await interactionRuntime.safeInteractionReply(
             interaction,
             content=f"Suggestion #{int(suggestionId)} marked {str(newStatus or '').strip().title()}.",

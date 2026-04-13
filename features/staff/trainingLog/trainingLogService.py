@@ -20,6 +20,7 @@ _certificationTitleRegex = re.compile(
     r"^(Grid|Emergency|Turbine|Solo|Supervisor) Certification(?: (Training|Examination))? Session Completed$",
     re.IGNORECASE,
 )
+_mirrorSourceFooterRegex = re.compile(r"^Source message ID:\s*(\d+)\s*$", re.IGNORECASE)
 _defaultStatsOrder = [
     "ORIENTATION",
     "GRID_TRAINING",
@@ -38,6 +39,7 @@ _weeklySummaryTypeOrder = [
     ("SUPERVISOR", "Supervisor"),
 ]
 _trainingMirrorColor = discord.Color.from_rgb(245, 150, 78)
+_summaryEmbedTitle = "Training Log Summary"
 
 
 @dataclass(slots=True)
@@ -577,6 +579,115 @@ class TrainingLogCoordinator:
             (int(channelId), int(mirrorMessageId), int(messageId)),
         )
 
+    async def _persistSummaryMessage(
+        self,
+        *,
+        orgKey: str,
+        channelId: int,
+        messageId: int,
+    ) -> None:
+        await self.recruitmentService.setSetting(self._summarySettingKey(orgKey), str(int(messageId)))
+        await self.recruitmentService.setSetting(self._summaryChannelSettingKey(orgKey), str(int(channelId)))
+
+    async def _getStoredSummaryMessage(
+        self,
+        *,
+        orgKey: str,
+    ) -> tuple[discord.TextChannel | discord.Thread | None, discord.Message | None]:
+        try:
+            oldMessageId = int((await self.recruitmentService.getSetting(self._summarySettingKey(orgKey))) or 0)
+        except Exception:
+            oldMessageId = 0
+        try:
+            oldChannelId = int((await self.recruitmentService.getSetting(self._summaryChannelSettingKey(orgKey))) or 0)
+        except Exception:
+            oldChannelId = 0
+        if oldMessageId <= 0 or oldChannelId <= 0:
+            return None, None
+
+        oldChannel = await self._getChannel(oldChannelId)
+        if oldChannel is None:
+            return None, None
+        try:
+            oldMessage = await self.taskBudgeter.runDiscord(lambda: oldChannel.fetch_message(oldMessageId))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            oldMessage = None
+        return oldChannel, oldMessage
+
+    def _messageLooksLikeSummaryPanel(self, message: discord.Message, *, orgKey: str) -> bool:
+        hasSummaryEmbed = any(
+            _normalizeWhitespace(getattr(embed, "title", "")).casefold() == _summaryEmbedTitle.casefold()
+            for embed in list(getattr(message, "embeds", []) or [])
+        )
+        if not hasSummaryEmbed:
+            return False
+
+        webhookName = _normalizeWhitespace(self._summaryWebhookNameForOrg(orgKey)).casefold()
+        author = getattr(message, "author", None)
+        authorNames = [
+            getattr(author, "display_name", None),
+            getattr(author, "global_name", None),
+            getattr(author, "name", None),
+        ]
+        if webhookName and any(_normalizeWhitespace(value).casefold() == webhookName for value in authorNames):
+            return True
+
+        botUserId = int(getattr(getattr(self.botClient, "user", None), "id", 0) or 0)
+        authorId = int(getattr(author, "id", 0) or 0)
+        if botUserId > 0 and authorId == botUserId:
+            return True
+
+        # The embed title is Jane's stable marker; the name checks above are just extra guardrails.
+        return True
+
+    async def _fetchLatestArchiveMessage(
+        self,
+        archiveChannel: discord.TextChannel | discord.Thread,
+    ) -> discord.Message | None:
+        try:
+            async for message in archiveChannel.history(limit=1):
+                return message
+        except (discord.Forbidden, discord.HTTPException):
+            return None
+        return None
+
+    async def _findLatestSummaryPanelMessage(
+        self,
+        archiveChannel: discord.TextChannel | discord.Thread,
+        *,
+        orgKey: str,
+    ) -> discord.Message | None:
+        try:
+            async for message in archiveChannel.history(limit=250):
+                if self._messageLooksLikeSummaryPanel(message, orgKey=orgKey):
+                    return message
+        except (discord.Forbidden, discord.HTTPException):
+            return None
+        return None
+
+    async def _deleteSummaryMessage(
+        self,
+        *,
+        message: discord.Message,
+        orgKey: str,
+    ) -> None:
+        deleted = False
+        try:
+            deleted = await self.webhooks.deleteOwnedWebhookMessage(
+                botClient=self.botClient,
+                message=message,
+                webhookName=self._summaryWebhookNameForOrg(orgKey),
+                reason="Training summary replacement",
+            )
+        except AttributeError:
+            deleted = False
+        if deleted:
+            return
+        try:
+            await self.taskBudgeter.runDiscord(lambda: message.delete())
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
     def _messageLock(self, messageId: int) -> asyncio.Lock:
         normalizedMessageId = int(messageId or 0)
         lock = self._messageLocks.get(normalizedMessageId)
@@ -701,6 +812,54 @@ class TrainingLogCoordinator:
             return None
         return None
 
+    def _sourceMessageIdFromMirrorMessage(self, message: discord.Message) -> int:
+        for embed in list(getattr(message, "embeds", []) or []):
+            footer = getattr(embed, "footer", None)
+            footerText = str(getattr(footer, "text", "") or "").strip()
+            match = _mirrorSourceFooterRegex.match(footerText)
+            if match:
+                try:
+                    return int(match.group(1))
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+
+    async def _buildArchiveMirrorIndex(
+        self,
+        archiveChannel: discord.TextChannel | discord.Thread,
+        *,
+        orgKey: str,
+    ) -> dict[int, int] | None:
+        mirroredSourceIds: dict[int, int] = {}
+        scannedCount = 0
+        try:
+            async for message in archiveChannel.history(limit=None):
+                scannedCount += 1
+                sourceMessageId = self._sourceMessageIdFromMirrorMessage(message)
+                if sourceMessageId > 0 and sourceMessageId not in mirroredSourceIds:
+                    mirroredSourceIds[int(sourceMessageId)] = int(message.id)
+                if scannedCount % 500 == 0:
+                    await asyncio.sleep(0)
+        except (discord.Forbidden, discord.HTTPException):
+            log.warning(
+                "Training mirror archive index failed: org=%s channelId=%s scanned=%s found=%s.",
+                str(orgKey or "").strip().upper() or "UNKNOWN",
+                int(getattr(archiveChannel, "id", 0) or 0),
+                scannedCount,
+                len(mirroredSourceIds),
+                exc_info=True,
+            )
+            return None
+
+        log.info(
+            "Training mirror archive index built: org=%s channelId=%s scanned=%s found=%s.",
+            str(orgKey or "").strip().upper() or "UNKNOWN",
+            int(getattr(archiveChannel, "id", 0) or 0),
+            scannedCount,
+            len(mirroredSourceIds),
+        )
+        return mirroredSourceIds
+
     async def _ensureMirrorMessage(
         self,
         message: discord.Message,
@@ -721,6 +880,8 @@ class TrainingLogCoordinator:
         desiredEmbeds = self._buildMirrorEmbeds(parsed, message)
         webhookName = self._mirrorWebhookNameForOrg(orgKey)
         storedMirrorChannelId = int((storedRow or {}).get("mirrorChannelId") or 0)
+        storedMirrorMessageId = int((storedRow or {}).get("mirrorMessageId") or 0)
+        hadStoredMirror = storedMirrorChannelId > 0 and storedMirrorMessageId > 0
         existingMirror: discord.Message | None = None
         if storedMirrorChannelId > 0 and storedMirrorChannelId == int(archiveChannel.id):
             _, existingMirror = await self._fetchMirrorMessage(storedRow)
@@ -729,6 +890,12 @@ class TrainingLogCoordinator:
             if recoveredMirror is not None:
                 existingMirror = recoveredMirror
                 await self._setMirrorMessage(int(message.id), int(archiveChannel.id), int(recoveredMirror.id))
+        if existingMirror is None and hadStoredMirror:
+            log.warning(
+                "Training mirror replacement skipped for source message %s because a stored mirror already exists but could not be fetched.",
+                int(getattr(message, "id", 0) or 0),
+            )
+            return False
         if existingMirror is not None:
             try:
                 edited = await self.webhooks.editOwnedWebhookMessage(
@@ -826,6 +993,10 @@ class TrainingLogCoordinator:
         *,
         refreshSummary: bool,
         orgKey: str | None = None,
+        archiveMirrorIndex: dict[int, int] | None = None,
+        mirrorNewRows: bool = True,
+        mirrorExistingRows: bool = True,
+        mirrorWhenArchiveIndexUnavailable: bool = True,
     ) -> bool:
         sourceChannelId = int(getattr(message.channel, "id", 0) or 0)
         profile = (
@@ -868,12 +1039,50 @@ class TrainingLogCoordinator:
                 )
                 return False
 
-            previousRow = await self._getStoredLog(int(message.id))
+            sourceMessageId = int(message.id)
+            previousRow = await self._getStoredLog(sourceMessageId)
             rowChanged = self._storedRowDiffers(previousRow, message, parsed)
             await self._upsertParsedLog(message, parsed)
-            storedRow = await self._getStoredLog(int(message.id))
+            storedRow = await self._getStoredLog(sourceMessageId)
             if storedRow is None:
                 return False
+
+            archivedMirrorMessageId = 0
+            if archiveMirrorIndex is not None:
+                archivedMirrorMessageId = int(archiveMirrorIndex.get(sourceMessageId) or 0)
+            if archivedMirrorMessageId > 0:
+                await self._setMirrorMessage(
+                    sourceMessageId,
+                    self._archiveChannelIdForOrg(resolvedOrgKey),
+                    archivedMirrorMessageId,
+                )
+                if refreshSummary and rowChanged:
+                    await self.refreshSummaryPanel(orgKey=resolvedOrgKey)
+                return True
+
+            if previousRow is not None and not mirrorExistingRows:
+                log.debug(
+                    "Training mirror skipped for existing stored source during backfill: org=%s messageId=%s.",
+                    resolvedOrgKey,
+                    sourceMessageId,
+                )
+                return True
+
+            if previousRow is None and not mirrorNewRows:
+                log.debug(
+                    "Training mirror skipped for newly stored source during startup backfill: org=%s messageId=%s.",
+                    resolvedOrgKey,
+                    sourceMessageId,
+                )
+                return True
+
+            if archiveMirrorIndex is None and not mirrorWhenArchiveIndexUnavailable:
+                log.warning(
+                    "Training mirror skipped because archive index was unavailable: org=%s messageId=%s.",
+                    resolvedOrgKey,
+                    sourceMessageId,
+                )
+                return True
 
             mirrored = await self._ensureMirrorMessage(message, storedRow, parsed, orgKey=resolvedOrgKey)
             if refreshSummary and (rowChanged or mirrored):
@@ -943,6 +1152,41 @@ class TrainingLogCoordinator:
             return rowVariant == "EXAM"
         return rowVariant in {"GENERAL", "EXAM"}
 
+    async def ensureSummaryPanelAtBottom(self, *, orgKey: str | None = None) -> None:
+        if not str(orgKey or "").strip():
+            for profile in self._trainingProfiles():
+                await self.ensureSummaryPanelAtBottom(orgKey=profile.key)
+            return
+
+        archiveChannelId = self._archiveChannelIdForOrg(orgKey)
+        archiveChannel = await self._getChannel(archiveChannelId)
+        if archiveChannel is None:
+            log.warning(
+                "Training summary bottom check skipped: org=%s archive channel %s is unavailable.",
+                str(orgKey or "").strip().upper() or "UNKNOWN",
+                int(archiveChannelId or 0),
+            )
+            return
+
+        latestMessage = await self._fetchLatestArchiveMessage(archiveChannel)
+        if latestMessage is not None and self._messageLooksLikeSummaryPanel(latestMessage, orgKey=str(orgKey)):
+            try:
+                await self._persistSummaryMessage(
+                    orgKey=str(orgKey),
+                    channelId=int(archiveChannel.id),
+                    messageId=int(latestMessage.id),
+                )
+            except Exception:
+                log.exception("Failed to persist latest training summary panel state for org %s.", orgKey)
+            log.info(
+                "Training summary bottom check passed: org=%s messageId=%s.",
+                str(orgKey or "").strip().upper() or "UNKNOWN",
+                int(getattr(latestMessage, "id", 0) or 0),
+            )
+            return
+
+        await self.refreshSummaryPanel(orgKey=orgKey)
+
     async def refreshSummaryPanel(self, *, orgKey: str | None = None) -> None:
         if not str(orgKey or "").strip():
             for profile in self._trainingProfiles():
@@ -969,7 +1213,7 @@ class TrainingLogCoordinator:
             cutoff = now - timedelta(days=7)
 
             embed = discord.Embed(
-                title="Training Log Summary",
+                title=_summaryEmbedTitle,
                 description=(
                     "Hosted counts use the last 7 days. "
                     "Grid/Emergency counts use trainings, and Grid/Emergency pass rates use exams."
@@ -1011,28 +1255,9 @@ class TrainingLogCoordinator:
                 )
             embed.set_footer(text=f"Tracked logs: {len(rows)}")
 
-            oldMessageId = 0
-            try:
-                oldMessageId = int((await self.recruitmentService.getSetting(self._summarySettingKey(orgKey))) or 0)
-            except Exception:
-                oldMessageId = 0
-            oldChannelId = 0
-            try:
-                oldChannelId = int((await self.recruitmentService.getSetting(self._summaryChannelSettingKey(orgKey))) or 0)
-            except Exception:
-                oldChannelId = 0
-
-            if oldMessageId > 0 and oldChannelId > 0:
-                oldChannel = await self._getChannel(oldChannelId)
-                if oldChannel is None:
-                    oldMessage = None
-                else:
-                    try:
-                        oldMessage = await self.taskBudgeter.runDiscord(lambda: oldChannel.fetch_message(oldMessageId))
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        oldMessage = None
-            else:
-                oldMessage = None
+            _, oldMessage = await self._getStoredSummaryMessage(orgKey=str(orgKey))
+            if oldMessage is None:
+                oldMessage = await self._findLatestSummaryPanelMessage(archiveChannel, orgKey=str(orgKey))
 
             sentMessage = await self.webhooks.sendOwnedWebhookMessageDetailed(
                 botClient=self.botClient,
@@ -1044,13 +1269,13 @@ class TrainingLogCoordinator:
             if sentMessage is None:
                 return
             if oldMessage is not None and int(oldMessage.id or 0) != int(sentMessage.id or 0):
-                try:
-                    await self.taskBudgeter.runDiscord(lambda: oldMessage.delete())
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    pass
+                await self._deleteSummaryMessage(message=oldMessage, orgKey=str(orgKey))
             try:
-                await self.recruitmentService.setSetting(self._summarySettingKey(orgKey), str(int(sentMessage.id)))
-                await self.recruitmentService.setSetting(self._summaryChannelSettingKey(orgKey), str(int(archiveChannel.id)))
+                await self._persistSummaryMessage(
+                    orgKey=str(orgKey),
+                    channelId=int(archiveChannel.id),
+                    messageId=int(sentMessage.id),
+                )
             except Exception:
                 log.exception("Failed to persist training summary panel state for org %s.", orgKey)
 
@@ -1120,7 +1345,19 @@ class TrainingLogCoordinator:
                     )
                     orgResult["reason"] = "source-channel-unavailable"
                     orgResults.append(orgResult)
+                    await self.ensureSummaryPanelAtBottom(orgKey=orgKey)
                     continue
+
+                archiveMirrorIndex: dict[int, int] | None = None
+                archiveChannel = await self._getChannel(archiveChannelId)
+                if archiveChannel is None:
+                    log.warning(
+                        "Training log backfill will not create mirrors for org %s: archive channel %s is unavailable.",
+                        orgKey,
+                        archiveChannelId,
+                    )
+                else:
+                    archiveMirrorIndex = await self._buildArchiveMirrorIndex(archiveChannel, orgKey=orgKey)
 
                 cutoff = now - timedelta(days=self._backfillDaysForOrg(orgKey))
                 scannedCount = 0
@@ -1134,6 +1371,10 @@ class TrainingLogCoordinator:
                                 message,
                                 refreshSummary=False,
                                 orgKey=orgKey,
+                                archiveMirrorIndex=archiveMirrorIndex,
+                                mirrorNewRows=bool(force),
+                                mirrorExistingRows=False,
+                                mirrorWhenArchiveIndexUnavailable=False,
                             )
                         except Exception:
                             failedCount += 1
@@ -1176,7 +1417,7 @@ class TrainingLogCoordinator:
                     failedCount,
                     cutoff.isoformat(),
                 )
-                await self.refreshSummaryPanel(orgKey=orgKey)
+                await self.ensureSummaryPanelAtBottom(orgKey=orgKey)
 
             result["orgResults"] = orgResults
             if orgResults:

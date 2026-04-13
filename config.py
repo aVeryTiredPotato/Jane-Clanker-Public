@@ -38,6 +38,11 @@ robloxInventoryApiKey = _envText("ROBLOX_INVENTORY_API_KEY", robloxOpenCloudApiK
 
 skinCooldownBypassRoleIds = []
 
+freedcampApiKey = _envText("FREEDCAMP_API_KEY")
+freedcampSecret = _envText("FREEDCAMP_SECRET")
+freedcampProjectId = 0
+freedcampTaskGroupId = 0
+
 # == Command Access / Runtime ==
 # Allowed servers for command usage.
 allowedCommandGuildIds = []
@@ -191,6 +196,7 @@ welcomeMessageTemplate = "Welcome to **{guild}**, {mention}."
 publicRoleMenus = {}
 
 suggestionChannelId = 0
+suggestionForumChannelId = 0
 suggestionReviewerRoleIds = []
 
 
