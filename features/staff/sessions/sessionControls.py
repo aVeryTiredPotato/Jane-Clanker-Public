@@ -131,6 +131,14 @@ class JoinPasswordModal(ui.Modal, title="Enter Password"):
                 ephemeral=True,
             )
 
+        attendeeCount = len(await _service.getAttendees(self.sessionId))
+        if session.get("maxAttendeeLimit") <= attendeeCount:
+            return await _safeInteractionReply(
+                interaction,
+                content="This orientation has reached its attendee limit, try your luck next time!", 
+                ephemeral=True,
+            )
+
         existing = await _service.getAttendee(self.sessionId, interaction.user.id)
         if existing:
             return await _safeInteractionReply(
@@ -153,6 +161,12 @@ class JoinPasswordModal(ui.Modal, title="Enter Password"):
             content="You have clocked in to this orientation.",
             ephemeral=True,
         )
+
+        attendeeCount = len(await _service.getAttendees(self.sessionId))
+        if attendeeCount >= session.get("maxAttendeeLimit", 30):
+            await _service.setStatus(self.sessionId, "FULL")
+            await _updateSessionMessage(interaction.client, self.sessionId)
+
         try:
             await _requestSessionMessageUpdate(interaction.client, self.sessionId)
         except Exception:
@@ -176,7 +190,7 @@ class SessionView(ui.View):
         if session["status"] in ("CANCELED", "FINISHED"):
             for child in self.children:
                 child.disabled = True
-        if session["status"] == "GRADING":
+        if session["status"] == "GRADING" or session["status"] == "FULL":
             self.joinBtn.disabled = True
 
     @ui.button(label="Delete", style=discord.ButtonStyle.danger, row=0)
@@ -217,9 +231,6 @@ class SessionView(ui.View):
                 ephemeral=True,
             )
 
-        await _service.setStatus(sessionId, "GRADING")
-        await _updateSessionMessage(interaction.client, sessionId)
-
         attendees = await _service.getAttendees(sessionId)
         if not attendees:
             return await _safeInteractionReply(
@@ -227,6 +238,9 @@ class SessionView(ui.View):
                 "No attendees are currently clocked in for grading.",
                 ephemeral=True,
             )
+
+        await _service.setStatus(sessionId, "GRADING")
+        await _updateSessionMessage(interaction.client, sessionId)
 
         idx = session["gradingIndex"]
         if idx >= len(attendees):
@@ -329,6 +343,13 @@ class SessionView(ui.View):
             return await _safeInteractionReply(
                 interaction,
                 "This orientation is not currently open for clock-ins.",
+                ephemeral=True,
+            )
+        attendeeCount = len(await _service.getAttendees(sessionId))
+        if session.get("maxAttendeeLimit") <= attendeeCount:
+            return await _safeInteractionReply(
+                interaction,
+                "This orientation has reached its attendee limit, try your luck next time!", 
                 ephemeral=True,
             )
         if not _canClockIn(interaction.user):
