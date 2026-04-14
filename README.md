@@ -65,6 +65,30 @@ Basic flow:
 .\.venv\Scripts\python.exe bot.py
 ```
 
+Windows helper scripts are also available:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\startBot.ps1
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\restartBot.ps1
+```
+
+Or use the repo-root batch files:
+
+```bat
+startBot.bat
+```
+
+```bat
+restartBot.bat
+```
+
+```bat
+stopBot.bat
+```
+
 If you are running Jane on another Windows box, prefer repo-relative paths in `.env` where possible. The ORBAT credentials path is set up to work that way.
 
 ## Public / Private Repo Split

@@ -193,6 +193,10 @@ bgFailureForumChannelId = 0
 welcomeChannelId = 0
 welcomeMessageTemplate = "Welcome to **{guild}**, {mention}."
 publicRoleMenus = {}
+# Roles allowed to create/remove reaction-role button messages.
+reactionRoleCommandRoleIds = [1490821054124523580, 1490821053134405744, 1490821049875431577]
+# Roles allowed to change the reaction-role safety/block rules.
+reactionRolePolicyRoleIds = [1490821054124523580, 1490821053134405744, 1490821049875431577]
 
 suggestionChannelId = 0
 suggestionForumChannelId = 0

@@ -1,3 +1,15 @@
+from .buttonRoles import (
+    ButtonRoleView,
+    addBlockedSelfRole,
+    createButtonRoleEntry,
+    deleteButtonRoleEntry,
+    groupButtonRoleEntriesByMessage,
+    isBlockedSelfRole,
+    listAllButtonRoleEntries,
+    listButtonRoleEntries,
+    listBlockedSelfRoles,
+    removeBlockedSelfRole,
+)
 from .reactionRoles import (
     deleteReactionRoleEntry,
     getReactionRoleEntry,
@@ -11,13 +23,23 @@ from .roleMenus import RoleMenuView, configuredRoleMenus, menuConfig
 
 __all__ = [
     "RoleMenuView",
+    "ButtonRoleView",
+    "addBlockedSelfRole",
     "configuredRoleMenus",
+    "createButtonRoleEntry",
+    "deleteButtonRoleEntry",
     "deleteReactionRoleEntry",
     "getReactionRoleEntry",
+    "groupButtonRoleEntriesByMessage",
+    "isBlockedSelfRole",
+    "listAllButtonRoleEntries",
+    "listButtonRoleEntries",
+    "listBlockedSelfRoles",
     "listReactionRoleEntries",
     "menuConfig",
     "normalizeEmojiKey",
     "reactionRoleSummaryLine",
+    "removeBlockedSelfRole",
     "resolveAssignableRole",
     "upsertReactionRoleEntry",
 ]
