@@ -378,17 +378,19 @@ class GradingView(ui.View):
             )
         await _safeInteractionDefer(interaction, ephemeral=True)
 
+        self._original_response = await interaction.original_response()
+
         session = await _service.getSession(self.sessionId)
         if not session:
             for child in self.children:
                 child.disabled = True
-            await _safeInteractionEditMessage(interaction, content="Session not found.", view=self)
+            await _safeInteractionEditMessage(self, interaction, True, content="Session not found.", view=self)
             return
         attendees = await _service.getAttendees(self.sessionId)
         if not attendees:
             for child in self.children:
                 child.disabled = True
-            await _safeInteractionEditMessage(interaction, content="No attendees.", view=self)
+            await _safeInteractionEditMessage(self, interaction, True, content="No attendees.", view=self)
             return
 
         idx = session["gradingIndex"]
@@ -396,7 +398,7 @@ class GradingView(ui.View):
             for child in self.children:
                 child.disabled = True
             await _updateSessionMessage(interaction.client, self.sessionId)
-            await _safeInteractionEditMessage(interaction, content="Grading complete.", view=self)
+            await _safeInteractionEditMessage(self, interaction, True, content="Grading complete.", view=self)
             return await _safeInteractionReply(interaction, "All attendees processed.", ephemeral=True)
 
         userId = attendees[idx]["userId"]
@@ -414,14 +416,14 @@ class GradingView(ui.View):
         if idx >= len(attendees):
             for child in self.children:
                 child.disabled = True
-            await _safeInteractionEditMessage(interaction, content="Grading complete.", view=self)
+            await _safeInteractionEditMessage(self, interaction, True, content="Grading complete.", view=self)
             return await _safeInteractionReply(interaction, "All attendees processed.", ephemeral=True)
 
         nextUserId = attendees[idx]["userId"]
         hostMember = interaction.guild.get_member(self.hostId) or interaction.user
         embed = _buildGradingEmbed(session, hostMember, nextUserId, idx + 1, len(attendees))
-        await _safeInteractionEditMessage(interaction, embed=embed, view=self)
-
+        await _safeInteractionEditMessage(self, interaction, False, embed=embed, view=self)
+       
     @ui.button(label="Pass", style=discord.ButtonStyle.success, emoji="\u2705")
     async def passBtn(self, interaction: discord.Interaction, button: ui.Button):
         await self.applyGrade(interaction, "PASS")
