@@ -1,4 +1,4 @@
-﻿from typing import Sequence
+from typing import Sequence
 
 import discord
 
@@ -7,7 +7,7 @@ from features.staff.sessions import service as sessionService
 
 
 class OrientationClockinAdapter:
-    async def createSession(self, guildId: int, channelId: int, hostId: int, **kwargs) -> int:
+    async def createSession(self, guildId: int, channelId: int, hostId: int, maxAttendeeLimit: int, **kwargs) -> int:
         sessionType = str(kwargs.get("sessionType") or "orientation").strip().lower()
         password = str(kwargs.get("password") or "").strip()
         messageId = int(kwargs.get("messageId") or 0)
@@ -18,6 +18,7 @@ class OrientationClockinAdapter:
             sessionType=sessionType,
             hostId=int(hostId),
             password=password,
+            maxAttendeeLimit=int(maxAttendeeLimit)
         )
 
     async def setSessionMessageId(self, sessionId: int, messageId: int) -> None:
@@ -50,6 +51,7 @@ class OrientationClockinAdapter:
             "hostId": int(session.get("hostId") or 0),
             "status": str(session.get("status") or "OPEN").upper(),
             "sessionType": str(session.get("sessionType") or "orientation").strip().lower(),
+            "maxAttendeeLimit": int(session.get("maxAttendeeLimit") or 30),
         }
 
     def buildEmbed(self, session: dict, attendees: Sequence[dict]) -> discord.Embed:

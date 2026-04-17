@@ -9,9 +9,6 @@ None of these are meant to be giant "prove yourself" jobs. They are mostly just 
 - Pick one file in [`docs/fileNotes/`](fileNotes/README.md) and add one more section or one more function breakdown.
   This is probably the easiest low-risk way to get familiar with the repo without breaking anything.
 
-- Improve one copyserver status/error message in [`runtime/textCommands.py`](../runtime/textCommands.py).
-  The command works, but the wording is still a little rough in a few spots and some failure messages could be clearer.
-
 - Add one more useful warning log in the snapshot restore path.
   Good files for this:
   - [`features/operations/serverSafety/snapshotRestore.py`](../features/operations/serverSafety/snapshotRestore.py)

@@ -3,6 +3,7 @@ from .service import (
     getCurfewTarget,
     listActiveCurfewTargets,
     listGuildCurfewTargets,
+    migrateGuildCurfewTargetsToOrg,
     setCurfewAppliedAt,
     upsertCurfewTarget,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "getCurfewTarget",
     "listActiveCurfewTargets",
     "listGuildCurfewTargets",
+    "migrateGuildCurfewTargetsToOrg",
     "setCurfewAppliedAt",
     "upsertCurfewTarget",
 ]

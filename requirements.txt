@@ -1,0 +1,11 @@
+# Jane runtime dependencies
+# This is intentionally a short top-level list, not a full pip freeze dump.
+
+discord.py==2.6.4
+python-dotenv==1.2.2
+aiohttp==3.13.3
+aiosqlite==0.22.1
+google-api-python-client==2.189.0
+google-auth==2.48.0
+pandas==3.0.0
+Pillow==12.1.1

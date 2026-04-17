@@ -17,12 +17,12 @@ def hashPassword(password: str) -> str:
     # simple SHA256; good enough for this use
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-async def createSession(guildId: int, channelId: int, messageId: int, sessionType: str, hostId: int, password: str) -> int:
+async def createSession(guildId: int, channelId: int, messageId: int, sessionType: str, hostId: int, password: str, maxAttendeeLimit: int) -> int:
     passwordHash = hashPassword(password)
     sessionId = await executeReturnId(
-        """INSERT INTO sessions (guildId, channelId, messageId, sessionType, hostId, passwordHash, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'OPEN')""",
-        (guildId, channelId, messageId, sessionType, hostId, passwordHash)
+        """INSERT INTO sessions (guildId, channelId, messageId, sessionType, hostId, passwordHash, maxAttendeeLimit, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')""",
+        (guildId, channelId, messageId, sessionType, hostId, passwordHash, maxAttendeeLimit)
     )
     return sessionId
 
@@ -231,7 +231,8 @@ async def isFinishAllowed(sessionId: int) -> tuple[bool, str]:
         return False, "No attendees are clocked in."
     for a in attendees:
         if a["examGrade"] == "NOT_GRADED":
-            return False, "Finish is blocked until **everyone is graded**."
+            await execute("UPDATE attendees SET examGrade = 'FAIL' WHERE sessionId = ? AND examGrade = 'NOT_GRADED'",
+            (sessionId,))
     return True, ""
 
 async def setBgStatus(sessionId: int, userId: int, bgStatus: str):

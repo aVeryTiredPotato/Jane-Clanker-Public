@@ -102,7 +102,7 @@ def buildSessionEmbed(
     showBg: bool = False,
 ) -> discord.Embed:
     title = "Certification Session" if session["sessionType"] != "orientation" else "Orientation Session"
-    embed = discord.Embed(title=title, description="Click the ? button below to join the session!")
+    embed = discord.Embed(title=title, description=f"Click the \u2705 button below to join the session!\nThis session has attendee limit of {session['maxAttendeeLimit']}.") 
 
     embed.add_field(name="Certification Type", value=session["sessionType"].title(), inline=False)
     embed.add_field(name="Host", value=hostMention, inline=False)

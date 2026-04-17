@@ -114,7 +114,18 @@ def slashPermissionHint(path: str) -> str:
     orbatSubmitterRoles = runtimePermissions.normalizeRoleIds(getattr(config, "orbatSubmitterRoleIds", []))
     orbatReviewerRoles = runtimePermissions.normalizeRoleIds(getattr(config, "orbatReviewerRoleIds", []))
     groupPatrolHostRoles = runtimePermissions.normalizeRoleIds(getattr(config, "recruitmentPatrolGroupHostRoleIds", []))
+    voiceChatAllRoles = runtimePermissions.normalizeRoleIds(getattr(config, "_canCreateVoiceChatAll", []))
+    voiceChatBasicRoles = runtimePermissions.normalizeRoleIds(getattr(config, "_canCreateVoiceChatBasic", []))
+    projectHodRoles = runtimePermissions.normalizeRoleIds(getattr(config, "projectHodRoleIds", []))
+    projectAssistantDirectorRoles = runtimePermissions.normalizeRoleIds(getattr(config, "projectAssistantDirectorRoleIds", []))
     allowPublicOrbatLookup = bool(getattr(config, "allowPublicOrbatLookup", False))
+
+    applicationPanelRoles = list(appAdminRoles)
+    for roleId in appGlobalReviewerRoles:
+        if roleId not in applicationPanelRoles:
+            applicationPanelRoles.append(roleId)
+    if hrRoleId > 0 and hrRoleId not in applicationPanelRoles:
+        applicationPanelRoles.append(hrRoleId)
 
     hints: dict[str, str] = {
         "/orientation": (
@@ -149,6 +160,10 @@ def slashPermissionHint(path: str) -> str:
             "Requires ORBAT submitter or reviewer roles "
             f"({runtimePermissions.formatRoleIds(orbatSubmitterRoles + [roleId for roleId in orbatReviewerRoles if roleId not in orbatSubmitterRoles])})."
         ),
+        "/applications": (
+            "Application admins, global reviewers, or HR roles "
+            f"({runtimePermissions.formatRoleIds(applicationPanelRoles)}), with admin/manage-server bypass."
+        ),
         "/applications-hub-post": f"Application admin roles required ({runtimePermissions.formatRoleIds(appAdminRoles)}).",
         "/applications-hub-post-all": f"Application admin roles required ({runtimePermissions.formatRoleIds(appAdminRoles)}).",
         "/apps pending": (
@@ -178,11 +193,41 @@ def slashPermissionHint(path: str) -> str:
             "Division clock-in roles required "
             f"({runtimePermissions.formatRoleIds(divisionClockinRoles)}), with admin/manage-server bypass."
         ),
+        "/project create": "Open to members in project-enabled servers.",
+        "/project list": "Open to members in project-enabled servers.",
+        "/project status": "Open to members in project-enabled servers.",
+        "/project submit": "Project creator only, with HOD/admin override.",
+        "/project approve": (
+            "Project HOD roles required "
+            f"({runtimePermissions.formatRoleIds(projectHodRoles)}), with admin/manage-server bypass."
+        ),
+        "/project deny": (
+            "Project HOD roles required "
+            f"({runtimePermissions.formatRoleIds(projectHodRoles)}), with admin/manage-server bypass."
+        ),
+        "/project finalize": (
+            "Project Assistant Director roles required "
+            f"({runtimePermissions.formatRoleIds(projectAssistantDirectorRoles)}), with admin/manage-server bypass."
+        ),
+        "/create-voice-chat": (
+            "Shift/Supervisor comms require all-access voice roles "
+            f"({runtimePermissions.formatRoleIds(voiceChatAllRoles)}); "
+            "Gamenight/Breakroom require basic voice roles "
+            f"({runtimePermissions.formatRoleIds(voiceChatBasicRoles)})."
+        ),
+        "/delete-voice-chat": (
+            "Requires permission for the selected managed voice-chat type; all-access roles can delete all types."
+        ),
+        "/clean-voice-chats": (
+            "All-access voice roles required "
+            f"({runtimePermissions.formatRoleIds(voiceChatAllRoles)})."
+        ),
         "/schedule-event": (
             "MR/HR roles required "
             f"({runtimePermissions.formatRoleIds([roleId for roleId in [mrRoleId, hrRoleId] if roleId > 0])}) "
             "or administrator/manage-server."
         ),
+        "/events": "Open to everyone in recognized servers.",
         "/user-info": "Open to everyone in recognized servers.",
         "/server-info": "Open to everyone in recognized servers.",
         "/server-stats": "Open to everyone in recognized servers.",
@@ -213,6 +258,7 @@ def slashPermissionHint(path: str) -> str:
         "/federation-unlink": "Administrator/manage-server only.",
         "/federation-list": "Administrator/manage-server only.",
         "/post-role-menu": "Administrator/manage-server only.",
+        "/ops": "Configured ops allowlist only.",
         "/snapshot-menu": "Administrator/manage-server plus configured snapshot allowlist.",
         "/quarantine": "Administrator/manage-server plus configured recovery allowlist.",
         "/pause": "Configured runtime-control allowlist only.",
@@ -222,6 +268,11 @@ def slashPermissionHint(path: str) -> str:
         "/curfew": "Administrator only.",
         "/jail": "Administrator only.",
         "/unjail": "Administrator only.",
+        "/gambling": (
+            "MR/HR roles required "
+            f"({runtimePermissions.formatRoleIds([roleId for roleId in [mrRoleId, hrRoleId] if roleId > 0])}); "
+            "casino category lock may also apply."
+        ),
     }
     return hints.get(normalizedPath, "Permission varies by command checks.")
 
@@ -231,6 +282,8 @@ def hiddenCommandHelpEntries() -> list[tuple[str, str, str]]:
     bgRoles = sorted(runtimePermissions.getBgCheckCertifiedRoleIds())
     appControlRoles = runtimePermissions.normalizeRoleIds(getattr(config, "divisionApplicationsControlRoleIds", []))
     appAdminRoles = runtimePermissions.normalizeRoleIds(getattr(config, "divisionApplicationsAdminRoleIds", []))
+    mrRoleId = runtimePermissions.toPositiveInt(getattr(config, "middleRankRoleId", 0))
+    hrRoleId = runtimePermissions.toPositiveInt(getattr(config, "highRankRoleId", 0))
 
     return [
         (
@@ -247,9 +300,19 @@ def hiddenCommandHelpEntries() -> list[tuple[str, str, str]]:
             ),
         ),
         (
+            "!janeTerminal",
+            "Show a read-only terminal-style runtime snapshot.",
+            "Configured terminal user only.",
+        ),
+        (
             "?bgleaderboard / ?bg-leaderboard",
             "Show BG reviewer approval/rejection leaderboard.",
             f"BG-certified roles required ({runtimePermissions.formatRoleIds(bgRoles)}).",
+        ),
+        (
+            "?trainingstats / ?hoststats [@user|userId]",
+            "Show tracked training/orientation host stats.",
+            "Open to everyone in recognized servers.",
         ),
         (
             "!skin <user>",
@@ -257,7 +320,12 @@ def hiddenCommandHelpEntries() -> list[tuple[str, str, str]]:
             f"Cohost roles required ({runtimePermissions.formatRoleIds(cohostRoles)}).",
         ),
         (
-            "!casinoToggle [on|off]",
+            "!kill <user>",
+            "Schedule a fake reactor-themed execution message.",
+            f"MR/HR roles required ({runtimePermissions.formatRoleIds([roleId for roleId in [mrRoleId, hrRoleId] if roleId > 0])}).",
+        ),
+        (
+            "!casinotoggle [on|off]",
             "Toggle gambling category-lock enforcement at runtime.",
             "Administrator only.",
         ),
@@ -271,7 +339,27 @@ def hiddenCommandHelpEntries() -> list[tuple[str, str, str]]:
             ),
         ),
         (
-            "?perm-sim /command [@user]",
+            "!copyserver",
+            "Copy the configured source server snapshot into the current server.",
+            "Lead-dev copyserver allowlist only.",
+        ),
+        (
+            "!allowserver",
+            "Add the current server to Jane's allowed command guild list.",
+            "Configured ops allowlist only.",
+        ),
+        (
+            "!mirrortraininghistory",
+            "Run the training history mirror backfill once.",
+            "Configured ops allowlist only.",
+        ),
+        (
+            "!shutdown",
+            "Close Jane's bot process cleanly.",
+            "Configured ops allowlist only.",
+        ),
+        (
+            "?perm-sim / ?permsim /command [@user]",
             "Hidden permission simulator (test-server scoped).",
             "Administrator/manage-server in configured test guild only.",
         ),
@@ -316,19 +404,41 @@ def _sectionMeta(sectionKey: str) -> tuple[str, str]:
 
 def _categorizeSlashPath(path: str) -> str:
     normalized = str(path or "").strip().lower()
-    if normalized.startswith(("/user-info", "/server-info", "/server-stats", "/poll ", "/poll", "/reminder ", "/reminder", "/suggestion ", "/suggestion")):
+    if normalized.startswith((
+        "/user-info",
+        "/server-info",
+        "/server-stats",
+        "/poll ",
+        "/poll",
+        "/reminder ",
+        "/reminder",
+        "/suggestion ",
+        "/suggestion",
+        "/post-role-menu",
+    )):
         return "general"
     if normalized.startswith(("/orientation", "/cohost", "/schedule-event", "/events", "/best-of")):
         return "sessions"
     if normalized.startswith(("/recruitment", "/recruitment-patrol", "/orbat-request", "/orbat-pending", "/orbat", "/loa-request", "/division-clockin")):
         return "recruitment"
-    if normalized.startswith("/bg-flag"):
+    if normalized.startswith(("/bg-check", "/bg-flag")):
         return "bg"
-    if normalized.startswith(("/applications-hub-post", "/applications-hub-post-all", "/apps " , "/apps")):
+    if normalized.startswith(("/applications", "/applications-hub-post", "/applications-hub-post-all", "/apps ", "/apps")):
         return "applications"
     if normalized.startswith(("/ribbon ", "/ribbon", "/ribbons ", "/ribbons", "/request-payment")):
         return "awards"
-    if normalized.startswith(("/snapshot-menu", "/quarantine", "/pause", "/restart", "/archive", "/curfew", "/jail", "/unjail")):
+    if normalized.startswith((
+        "/snapshot-menu",
+        "/quarantine",
+        "/pause",
+        "/restart",
+        "/archive",
+        "/curfew",
+        "/jail",
+        "/unjail",
+        "/notes-",
+        "/federation-",
+    )):
         return "moderation"
     return "misc"
 

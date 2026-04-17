@@ -2,6 +2,8 @@
 
 This is the practical "how do we actually run Jane" doc.
 
+For a fresh Windows dev machine, start with [New Machine Setup](newMachineSetup.md), then come back here for production/runtime details.
+
 ## Main Assumption
 
 Jane is meant to run from the private repo on a separate Windows server.
@@ -87,9 +89,13 @@ Jane has already been patched in a few places to prefer repo-relative paths, bec
 
 ## Running Jane
 
-There is no dependency lockfile yet, so deployment is still somewhat manual.
-
 Current normal startup:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Then start Jane with:
 
 ```powershell
 .\.venv\Scripts\python.exe bot.py
@@ -110,6 +116,8 @@ Jane can:
 - check for updates
 - optionally pull from Git
 - restart herself
+
+The detailed updater behavior lives in [Auto Git Update](autoGitUpdate.md).
 
 But production should still be treated carefully. A bad push can still be a bad night.
 

@@ -1,4 +1,4 @@
-﻿import discord
+import discord
 from discord.ext import commands
 from discord import app_commands
 from features.staff.clockins import ClockinEngine, OrientationClockinAdapter
@@ -29,14 +29,17 @@ class SessionsCog(commands.Cog):
         return runtimePermissions.hasBgCheckCertifiedRole(member)
 
     @app_commands.command(name="orientation", description="Start an orientation session.")
-    @app_commands.describe(password="Password attendees must enter to join.")
-    async def orientation(self, interaction: discord.Interaction, password: str):
+    @app_commands.rename(maxAttendeeLimit="max-attendee-limit")
+    @app_commands.describe(password="Password attendees must enter to join.", maxAttendeeLimit="Number of attendees allowed in the session.")
+    async def orientation(self, interaction: discord.Interaction, password: str, maxAttendeeLimit: int = 30):
         if not interaction.guild or not interaction.channel:
             return await self._safeEphemeral(interaction, "This command can only be used inside a server channel.")
         if not isinstance(interaction.user, discord.Member):
             return await self._safeEphemeral(interaction, "This command can only be used inside a server channel.")
         if not self.canStart(interaction.user):
             return await self._safeEphemeral(interaction, "You do not have permission to start orientation sessions.")
+        if not maxAttendeeLimit > 0:
+            return await self._safeEphemeral(interaction, "Attendee limit must be greater than 0.")
 
         # Create placeholder message first so we can store messageId
         await self._safeEphemeral(interaction, "Creating orientation session...")
@@ -51,6 +54,7 @@ class SessionsCog(commands.Cog):
             sessionType="orientation",
             password=password,
             messageId=0,
+            maxAttendeeLimit=maxAttendeeLimit,
         )
         session = await self._orientationEngine.getSession(int(sessionId))
         tempEmbed = (
@@ -58,7 +62,7 @@ class SessionsCog(commands.Cog):
             if session is not None
             else discord.Embed(
                 title="Orientation Session",
-                description="Click the \u2705 button below to join the session!",
+                description=f"Click the \u2705 button below to join the session!\n This Orientation has attendee limit of {session.get('maxAttendeeLimit', 30)}.",
             )
         )
         try:

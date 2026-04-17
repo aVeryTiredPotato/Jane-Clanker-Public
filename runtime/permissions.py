@@ -51,6 +51,26 @@ def hasCohostPermission(member: discord.Member) -> bool:
     return any(int(role.id) in allowedRoles for role in member.roles)
 
 
+@lru_cache(maxsize=1)
+def getMiddleHighRankRoleIds() -> set[int]:
+    out: set[int] = set()
+    for raw in (
+        getattr(config, "middleRankRoleId", None),
+        getattr(config, "highRankRoleId", None),
+    ):
+        parsed = toPositiveInt(raw)
+        if parsed > 0:
+            out.add(parsed)
+    return out
+
+
+def hasMiddleHighRankRole(member: discord.Member) -> bool:
+    allowedRoles = getMiddleHighRankRoleIds()
+    if not allowedRoles:
+        return False
+    return any(int(role.id) in allowedRoles for role in member.roles)
+
+
 def getBgCheckCertifiedRoleIds() -> set[int]:
     out: set[int] = set()
     for raw in (
@@ -102,4 +122,5 @@ def isCommandExecutionAllowed(userId: int) -> bool:
 
 def clearPermissionCaches() -> None:
     getCohostAllowedRoleIds.cache_clear()
+    getMiddleHighRankRoleIds.cache_clear()
     getTemporaryCommandAllowedUserIds.cache_clear()

@@ -49,6 +49,7 @@ _MRperms = makeOverwrite(
     manage_messages=True,
     use_soundboard=True,
     stream=True,
+    speak=True
 )
 
 _cohostPerms = makeOverwrite(

@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import discord
 from features.staff.sessions import bgBuckets
+from runtime import orgProfiles
 
 _deps: dict[str, Any] = {}
 
@@ -86,17 +87,45 @@ async def _recoverMissingQueueMessage(
 def bgQueueChannelCandidateIds(session: dict[str, Any], reviewBucket: str = bgBuckets.adultBgReviewBucket) -> list[int]:
     candidateIds: list[int] = []
     normalizedBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
+    try:
+        sessionGuildId = int(session.get("guildId") or 0)
+    except (TypeError, ValueError):
+        sessionGuildId = 0
 
     try:
-        configuredChannelId = int(getattr(_dep("configModule"), "bgCheckChannelId", 0) or 0)
+        configuredChannelId = int(
+            orgProfiles.getOrganizationValue(
+                _dep("configModule"),
+                "bgCheckChannelId",
+                guildId=sessionGuildId,
+                default=0,
+            )
+            or 0
+        )
     except (TypeError, ValueError):
         configuredChannelId = 0
     try:
-        configuredAdultChannelId = int(getattr(_dep("configModule"), "bgCheckAdultReviewChannelId", 0) or 0)
+        configuredAdultChannelId = int(
+            orgProfiles.getOrganizationValue(
+                _dep("configModule"),
+                "bgCheckAdultReviewChannelId",
+                guildId=sessionGuildId,
+                default=0,
+            )
+            or 0
+        )
     except (TypeError, ValueError):
         configuredAdultChannelId = 0
     try:
-        configuredMinorChannelId = int(getattr(_dep("configModule"), "bgCheckMinorReviewChannelId", 0) or 0)
+        configuredMinorChannelId = int(
+            orgProfiles.getOrganizationValue(
+                _dep("configModule"),
+                "bgCheckMinorReviewChannelId",
+                guildId=sessionGuildId,
+                default=0,
+            )
+            or 0
+        )
     except (TypeError, ValueError):
         configuredMinorChannelId = 0
 

@@ -38,9 +38,10 @@ Grouped by domain:
 - `features/community`
 - `features/operations`
 - `features/staff`
-- `features/gambling`
 
 The cogs should mostly be thin-ish wrappers around these feature modules, though some older areas still blur that line.
+
+Gambling is an exception to this grouping right now. Its active code still lives in `silly/gambling*`, with `runtime/gamblingApi.py` as shared runtime support.
 
 ### `runtime/`
 

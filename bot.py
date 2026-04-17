@@ -41,6 +41,7 @@ from runtime import (
     loggingConsole as runtimeLoggingConsole,
     maintenance as runtimeMaintenance,
     metricsExport as runtimeMetricsExport,
+    orgFeatureGate as runtimeOrgFeatureGate,
     pauseState as runtimePauseState,
     permissions as runtimePermissions,
     privateServices as runtimePrivateServices,
@@ -70,6 +71,7 @@ botClient = commands.Bot(command_prefix="!", intents=intents)
 interactionRuntime.installRetrySafeInteractionLayer()
 _botStartedAt = datetime.now(timezone.utc)
 _lockedPrefixCommandTokens = {
+    "!kill",
     "!skin",
     "?janeruntime",
     "?bgleaderboard",
@@ -92,6 +94,7 @@ _runtimePausedMessage = "Jane is currently paused. Use /pause again to resume ac
 _serverNotRecognizedMessage = (
     "Server not recognized. Please reach out to a_very_tired_potato for assistance."
 )
+_organizationFeatureUnavailableMessage = "This feature is not enabled for this organization."
 _temporaryLockMessage = "Commands are temporarily restricted to specific staff during rollout."
 _allowedCommandGuildIds = {
     int(guildId)
@@ -174,6 +177,7 @@ _errorCoordinator = runtimeErrors.ErrorCoordinator(
 )
 _metricsExporter: runtimeMetricsExport.MetricsExporter | None = None
 _gamblingApiServer: runtimeGamblingApi.GamblingApiServer | None = None
+_trainingLogSyncTask: asyncio.Task | None = None
 
 
 def _formatUptime(delta: timedelta) -> str:
@@ -291,6 +295,52 @@ _trainingLogCoordinator = trainingLogService.TrainingLogCoordinator(
     recruitmentService=recruitmentService,
     webhookModule=runtimeWebhooks,
 )
+
+
+async def _runTrainingLogStartupSync() -> None:
+    await botClient.wait_until_ready()
+    maxAttempts = 3
+    retryDelaySec = 30
+    for attempt in range(1, maxAttempts + 1):
+        logging.info(
+            "Training log startup sync attempt %s/%s beginning.",
+            attempt,
+            maxAttempts,
+        )
+        await _trainingLogCoordinator.syncRecentMessages()
+        if getattr(_trainingLogCoordinator, "_lastReadySyncAt", None) is not None:
+            logging.info("Training log startup sync completed.")
+            return
+        if attempt < maxAttempts:
+            logging.warning(
+                "Training log startup sync did not complete on attempt %s/%s. Retrying in %ss.",
+                attempt,
+                maxAttempts,
+                retryDelaySec,
+            )
+            await asyncio.sleep(retryDelaySec)
+    logging.warning("Training log startup sync gave up after %s attempt(s).", maxAttempts)
+
+
+def _startTrainingLogSyncTask() -> None:
+    global _trainingLogSyncTask
+    if _trainingLogSyncTask is not None and not _trainingLogSyncTask.done():
+        return
+    task = asyncio.create_task(
+        _runTrainingLogStartupSync(),
+        name="training-log-backfill",
+    )
+    _trainingLogSyncTask = task
+
+    def _doneCallback(doneTask: asyncio.Task) -> None:
+        try:
+            doneTask.result()
+        except asyncio.CancelledError:
+            logging.info("Training log backfill task was cancelled.")
+        except Exception:
+            logging.exception("Training log backfill task crashed.")
+
+    task.add_done_callback(_doneCallback)
 
 
 def _orbatWeeklyScheduleConfig() -> tuple[int, int, int]:
@@ -627,6 +677,7 @@ def _getTextCommandRouter() -> runtimeTextCommands.TextCommandRouter:
             isGuildAllowedForCommands=_isGuildAllowedForCommands,
             allowGuildForCommands=_allowGuildForCommands,
             orbatWeeklyScheduleConfig=_orbatWeeklyScheduleConfig,
+            trainingLogCoordinator=_trainingLogCoordinator,
             serverSafetyService=_privateServices.serverSafetyService,
             gitUpdateCoordinator=_gitUpdateCoordinator,
             generalErrorLogPath=str(getattr(botClient, "runtimeServices", {}).get("generalErrorLogPath", "") or ""),
@@ -652,6 +703,10 @@ async def _handleShutdownCommand(message: discord.Message) -> bool:
 
 async def _handleAllowServerCommand(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handleAllowServer(message)
+
+
+async def _handleMirrorTrainingHistoryCommand(message: discord.Message) -> bool:
+    return await _getTextCommandRouter().handleMirrorTrainingHistory(message)
 
 
 async def _handleCopyServerCommand(message: discord.Message) -> bool:
@@ -728,12 +783,14 @@ async def setup_hook() -> None:
     await _gamblingApiServer.start()
     if _gitUpdateCoordinator is not None:
         _gitUpdateCoordinator.start()
+    _startTrainingLogSyncTask()
 
 
 @botClient.event
 async def on_ready() -> None:
     await _bootstrapCoordinator.onReady()
-    asyncio.create_task(_trainingLogCoordinator.syncRecentMessages())
+    logging.info("on_ready reached; ensuring training log startup sync task is running.")
+    _startTrainingLogSyncTask()
 
 
 @botClient.check
@@ -753,6 +810,17 @@ async def prefixCommandSafetyCheck(ctx: commands.Context) -> bool:
         try:
             await ctx.reply(
                 _serverNotRecognizedMessage,
+                mention_author=False,
+            )
+        except Exception:
+            pass
+        return False
+    commandName = str(getattr(getattr(ctx, "command", None), "qualified_name", "") or getattr(getattr(ctx, "command", None), "name", "") or "").strip().lower()
+    orgFeatureEnabled, orgFeatureKey = runtimeOrgFeatureGate.isCommandEnabledForGuild(config, guildId, commandName)
+    if not orgFeatureEnabled:
+        try:
+            await ctx.reply(
+                f"{_organizationFeatureUnavailableMessage} (`{orgFeatureKey}`)",
                 mention_author=False,
             )
         except Exception:
@@ -799,6 +867,14 @@ async def interactionSafetyCheck(interaction: discord.Interaction) -> bool:
         await _safeInteractionSend(
             interaction,
             _temporaryLockMessage,
+            ephemeral=True,
+        )
+        return False
+    orgFeatureEnabled, orgFeatureKey = runtimeOrgFeatureGate.isCommandEnabledForGuild(config, guildId, commandName)
+    if not orgFeatureEnabled:
+        await _safeInteractionSend(
+            interaction,
+            f"{_organizationFeatureUnavailableMessage} (`{orgFeatureKey}`)",
             ephemeral=True,
         )
         return False
@@ -961,6 +1037,14 @@ async def on_message(message: discord.Message) -> None:
     if _pauseController.isPaused():
         if not message.author.bot:
             token = _firstLowerToken(message.content or "")
+            guildId = int(getattr(getattr(message, "guild", None), "id", 0) or 0)
+            orgFeatureEnabled, orgFeatureKey = runtimeOrgFeatureGate.isTokenEnabledForGuild(config, guildId, token)
+            if not orgFeatureEnabled:
+                try:
+                    await message.channel.send(f"{_organizationFeatureUnavailableMessage} (`{orgFeatureKey}`)")
+                except Exception:
+                    pass
+                return
             if token == "!allowserver":
                 if await _handleAllowServerCommand(message):
                     return
@@ -969,6 +1053,9 @@ async def on_message(message: discord.Message) -> None:
                     return
             if token == "!shutdown":
                 if await _handleShutdownCommand(message):
+                    return
+            if token == "!mirrortraininghistory":
+                if await _handleMirrorTrainingHistoryCommand(message):
                     return
             if token == "!janeterminal":
                 if await _handleJaneTerminal(message):
@@ -989,10 +1076,19 @@ async def on_message(message: discord.Message) -> None:
         return
     if not message.author.bot:
         token = _firstLowerToken(message.content or "")
+        guildId = int(getattr(getattr(message, "guild", None), "id", 0) or 0)
+        orgFeatureEnabled, orgFeatureKey = runtimeOrgFeatureGate.isTokenEnabledForGuild(config, guildId, token)
+        if not orgFeatureEnabled:
+            try:
+                await message.channel.send(f"{_organizationFeatureUnavailableMessage} (`{orgFeatureKey}`)")
+            except Exception:
+                pass
+            return
         if await _handleAllowServerCommand(message):
             return
+        if await _handleMirrorTrainingHistoryCommand(message):
+            return
         if token in _manualTextCommandTokens:
-            guildId = int(getattr(getattr(message, "guild", None), "id", 0) or 0)
             if not _isGuildAllowedForCommands(guildId):
                 if guildId > 0:
                     asyncio.create_task(
@@ -1024,6 +1120,8 @@ async def on_message(message: discord.Message) -> None:
             botClient,
             hasSkinPermission=_hasCohostPermission,
         ):
+            return
+        if await sillyCommands.handleKillCommand(message, botClient):
             return
         if await sillyCommands.handleCasinoToggleCommand(message):
             return

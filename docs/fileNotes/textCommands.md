@@ -2,16 +2,25 @@
 
 [`runtime/textCommands.py`](../../runtime/textCommands.py) is where a lot of Jane's hidden/manual text-command logic lives.
 
-If slash commands are the public front desk, this file is more like the weird side door staff keeps using anyway.
+If slash commands are the normal command surface, this file is the manual/runtime command surface.
 
 ## What Lives Here
 
 - `?janeRuntime`
 - `!janeterminal`
-- `!copyserver`
 - `!shutdown`
-- some BG-check utility text commands
+- `!allowserver`
+- `!mirrortraininghistory`
+- `?bgcheck` / `?bg-check`
+- `?bgleaderboard` / `?bg-leaderboard`
+- `?perm-sim` / `?permsim`
+- `:)help`
 - helper methods for hidden/runtime-only workflows
+
+Training stats are handled next to this router from `bot.py`, but the command lives in the same text-command path:
+
+- `?trainingstats`
+- `?hoststats`
 
 ## Main Class
 
@@ -32,41 +41,44 @@ Good methods to know:
 - `handleJaneTerminal(...)`
   builds the hidden read-only terminal view
 
-- `handleCopyServer(...)`
-  starts the whole copyserver flow
-
 - `handleShutdown(...)`
   hidden lead-dev shutdown command
 
-## Copyserver Notes
+- `handleAllowServer(...)`
+  runtime/manual allowed-guild helper
 
-The copyserver code in this file is pretty dense now.
+- `handleMirrorTrainingHistory(...)`
+  manual training-log mirror/backfill trigger
 
-The big moving pieces are:
+- `handlePermissionSimulatorCommand(...)`
+  test-server permission helper for checking likely slash-command access
 
-- preview + confirmation UI
-- pinned snapshot / backup state
-- pause / retry / auto-retry
-- progress message editing
-- final allowlist + dev-role handling
+## Handler Order
 
-If you are trying to understand `!copyserver`, start with:
+`bot.py` owns the actual `on_message` ordering.
 
-- `CopyServerConfirmView`
-- `handleCopyServer(...)`
-- the state helpers in [`runtime/copyServerState.py`](../../runtime/copyServerState.py)
-- the restore stack in [`features/operations/serverSafety/snapshotRestore.py`](../../features/operations/serverSafety/snapshotRestore.py)
+Important shape:
+
+- some high-risk commands are checked early before the normal message path finishes
+- `:)help` deletes the trigger message when Jane has manage-message permissions
+- denied hidden commands often return `True` without explaining anything publicly
+- `?trainingstats` / `?hoststats` route through `TrainingLogCoordinator`, not `TextCommandRouter`
+
+If a text command seems to be ignored, check both this file and the order in `bot.py`.
 
 ## Things To Be Careful About
 
-- This file mixes "small utility command" logic with one very large workflow (`!copyserver`).
-  So it is easy to accidentally break a simple command while touching the big one.
+- This file mixes "small utility command" logic with hidden runtime workflows.
+  So it is easy to accidentally break a simple command while touching a different one.
 
 - A lot of these commands are intentionally hidden or restricted.
   If you touch the allowlist logic, double-check who can still run the command afterward.
 
+- `!shutdown`, `!allowserver`, and `!mirrortraininghistory` share lead-dev style authorization.
+  Be careful when changing one helper because it may affect more than one command.
+
 - Webhook-authored messages behave differently from normal bot-authored messages.
-  Copyserver status edits are one place where that matters a lot.
+  If a hidden command edits a webhook-authored message, check the webhook helper path before assuming a normal message edit will work.
 
 ## Good Small Edits Here
 

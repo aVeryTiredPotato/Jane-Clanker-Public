@@ -9,6 +9,7 @@ import config
 from features.staff.recruitment import rendering as recruitmentRendering
 from features.staff.recruitment import service as recruitmentService
 from features.staff.recruitment import sheets as recruitmentSheets
+from runtime import orgProfiles
 from runtime import taskBudgeter
 from features.staff.sessions import roblox
 from features.staff.sessions import service as sessionService
@@ -160,7 +161,12 @@ async def attemptRobloxAutoAccept(
     if attendee.get("robloxJoinStatus") == "ACCEPTED":
         return "ACCEPTED"
 
-    groupId = getattr(config, "robloxGroupId", 0)
+    groupId = orgProfiles.getOrganizationValue(
+        config,
+        "robloxGroupId",
+        guildId=int(getattr(guild, "id", 0) or 0),
+        default=0,
+    )
     if not groupId or not getattr(config, "robloxOpenCloudApiKey", ""):
         await sessionService.setRobloxStatus(
             sessionId,
@@ -285,12 +291,19 @@ async def postOrientationResults(
     *,
     getChannel: GetChannelFn,
 ) -> None:
-    channelId = int(getattr(config, "trainingResultsChannelId", 1377407562970038272) or 0)
-    if channelId <= 0:
-        return
-
     session = await sessionService.getSession(sessionId)
     if not session:
+        return
+    channelId = int(
+        orgProfiles.getOrganizationValue(
+            config,
+            "trainingResultsChannelId",
+            guildId=int(session.get("guildId") or 0),
+            default=1377407562970038272,
+        )
+        or 0
+    )
+    if channelId <= 0:
         return
     attendees = await sessionService.getAttendees(sessionId)
 

@@ -7,6 +7,13 @@ If you want more specific "what does this actual file do?" docs, check:
 - [New Dev Tasks](../newDevTasks.md)
 - [File Notes](../fileNotes/README.md)
 
+## Feature Runbooks
+
+- [Sessions And BG Checks](sessions.md)
+- [Server Recovery](serverRecovery.md)
+- [Training Log Mirror](trainingLogMirror.md)
+- [Best Of](bestOf.md)
+
 ## Community
 
 - polls
@@ -56,19 +63,23 @@ Look under:
 - `cogs/staff`
 - `features/staff`
 
+The sessions/BG-check flow is complicated enough that it has its own runbook:
+
+- [Sessions And BG Checks](sessions.md)
+
 ## Gambling
 
-moneyyyyyyy (it is entirely rigged.):
+Gambling is still in the legacy/fun slice, but it is active code:
 
-- `features/gambling`
+- `silly/gambling/`
 - `silly/gamblingCog.py`
+- `silly/gamblingService.py`
 - `runtime/gamblingApi.py`
 
 ## Legacy / Weird
 
 `silly/` is still around.
 
-Some of it is actually still useful.
-Some of it is just old Jane code.
+Some of it is active functionality, some is old Jane history, and some is legacy event code kept for context.
 
-So if you see functionality in there, do not assume it is dead just because the folder name is silly.
+Do not assume code is dead just because it lives there. Check whether it is loaded by `runtime/extensionLayout.py` or a plugin list before removing it.

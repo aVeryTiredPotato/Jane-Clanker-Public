@@ -177,6 +177,7 @@ bgCheckAdultReviewChannelId = 0
 bgCheckMinorReviewGuildId = 0
 bgCheckMinorReviewChannelId = 0
 bgCheckMinorReviewRoleId = 0
+bgCheckMinorReviewRoleIds = []
 bgMinorAgeRoleIds = []
 bgMajorAgeRoleIds = []
 bgMinorAgeGroups = ["13-15", "16-17", "NO INFO"]
@@ -726,9 +727,91 @@ johnTrainingLogChannelId = 0
 trainingArchiveChannelId = johnTrainingLogChannelId
 trainingLogBackfillDays = 365
 trainingSummaryWebhookName = "Jane Training Summary"
+trainingMirrorWebhookName = "Jane Training Log"
 johnEventLogChannelId = 0
 johnClankerBotId = 0
 
 
 # == Hidden / Misc ==
 skinAllowedUserIds = []
+
+
+# == Organization Profiles ==
+# Jane is still a single bot process, but org-specific settings now live behind
+# profile keys so other groups can be added without turning config.py into a
+# bigger singleton mess than it already is.
+defaultOrganizationKey = "ANRO"
+organizationCommandFeatureMap = {
+    "orientation": "anro-sessions",
+    "bg-check": "anro-bgc",
+    "bgcheck": "anro-bgc",
+    "trainingstats": "anro-training-logs",
+    "hoststats": "anro-training-logs",
+    "mirrortraininghistory": "anro-training-logs",
+    "bgleaderboard": "anro-bgc",
+    "bg-leaderboard": "anro-bgc",
+    "recruitment": "anro-recruitment",
+    "orbat": "anro-orbat",
+    "orbat-request": "anro-orbat",
+    "orbat-pending": "anro-orbat",
+    "loa-request": "anro-orbat",
+}
+_anroOrganizationGuildIds = sorted(
+    {
+        int(guildId)
+        for guildId in (
+            list(allowedCommandGuildIds)
+            + [
+                serverId,
+                serverIdTesting,
+                bgCheckAdultReviewGuildId,
+                bgCheckMinorReviewGuildId,
+            ]
+        )
+        if int(guildId) > 0
+    }
+)
+organizationProfiles = {
+    "ANRO": {
+        "label": "ANRO",
+        "primaryGuildId": serverId,
+        "guildIds": list(_anroOrganizationGuildIds),
+        "enabledFeatures": [
+            "anro-sessions",
+            "anro-bgc",
+            "anro-training-logs",
+            "anro-recruitment",
+            "anro-orbat",
+        ],
+        "trainingResultsChannelId": trainingResultsChannelId,
+        "trainingArchiveChannelId": trainingArchiveChannelId,
+        "trainingLogBackfillDays": trainingLogBackfillDays,
+        "trainingSummaryWebhookName": trainingSummaryWebhookName,
+        "trainingMirrorWebhookName": trainingMirrorWebhookName,
+        "startupGreetingChannelId": startupGreetingChannelId,
+        "bgCheckChannelId": bgCheckChannelId,
+        "bgCheckAdultReviewGuildId": bgCheckAdultReviewGuildId,
+        "bgCheckAdultReviewChannelId": bgCheckAdultReviewChannelId,
+        "bgCheckMinorReviewGuildId": bgCheckMinorReviewGuildId,
+        "bgCheckMinorReviewChannelId": bgCheckMinorReviewChannelId,
+        "bgCheckMinorReviewRoleId": bgCheckMinorReviewRoleId,
+        "bgCheckMinorReviewRoleIds": list(bgCheckMinorReviewRoleIds),
+        "bgCheckSourceGuildId": bgCheckSourceGuildId,
+        "bgMinorAgeRoleIds": list(bgMinorAgeRoleIds),
+        "bgMajorAgeRoleIds": list(bgMajorAgeRoleIds),
+        "bgMinorAgeGroups": list(bgMinorAgeGroups),
+        "bgAdultAgeGroups": list(bgAdultAgeGroups),
+        "bgUnknownDefaultsToMinor": bool(bgUnknownDefaultsToMinor),
+        "moderatorRoleId": moderatorRoleId,
+        "bgReviewModeratorRoleId": bgReviewModeratorRoleId,
+        "newApplicantRoleId": newApplicantRoleId,
+        "pendingBgRoleId": pendingBgRoleId,
+        "robloxGroupId": robloxGroupId,
+        "robloxGroupUrl": robloxGroupUrl,
+    },
+}
+guildOrganizationKeys = {
+    int(guildId): defaultOrganizationKey
+    for guildId in list(_anroOrganizationGuildIds)
+    if int(guildId) > 0
+}

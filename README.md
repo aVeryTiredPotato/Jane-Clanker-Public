@@ -8,9 +8,11 @@ The goal of these docs is not to document every function. The goal is to make th
 
 ## Start Here
 
+- [New Machine Setup](docs/newMachineSetup.md)
 - [Architecture](docs/architecture.md)
 - [Deployment](docs/deployment.md)
 - [Operations](docs/operations.md)
+- [Auto Git Update](docs/autoGitUpdate.md)
 - [Public / Private Split](docs/publicPrivateSplit.md)
 - [Feature Map](docs/features/README.md)
 - [New Dev Tasks](docs/newDevTasks.md)
@@ -45,21 +47,26 @@ The goal of these docs is not to document every function. The goal is to make th
 - `features/community`
 - `features/operations`
 - `features/staff`
-- `features/gambling`
+- `silly/gambling*`
+- `runtime/gamblingApi.py`
 
 There are still a couple oddballs hanging around, like `cogs/applicationsCog.py`, but the structure is much saner than it used to be.
 
 ## Running Jane Locally
 
-There is not currently a pinned dependency file in the repo, so local setup is still a little manual.
-
 Basic flow:
 
 1. Create or activate a virtualenv.
-2. Copy [`.env.example`](.env.example) to `.env`.
-3. Fill in the required secrets/tokens.
-4. Adjust `config.py` for any server-specific IDs or behavior.
-5. Start Jane with:
+2. Install dependencies:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+3. Copy [`.env.example`](.env.example) to `.env`.
+4. Fill in the required secrets/tokens.
+5. Adjust `config.py` for any server-specific IDs or behavior.
+6. Start Jane with:
 
 ```powershell
 .\.venv\Scripts\python.exe bot.py

@@ -17,6 +17,7 @@ from runtime import bgQueueCommand as runtimeBgQueueCommand
 from runtime import copyServerState as runtimeCopyServerState
 from runtime import helpMenu as runtimeHelpMenu
 from runtime import interaction as interactionRuntime
+from runtime import orgProfiles
 from runtime import webhooks as runtimeWebhooks
 from features.staff.sessions import bgBuckets
 
@@ -1229,6 +1230,7 @@ class TextCommandRouter:
         isGuildAllowedForCommands: Callable[[int], bool],
         allowGuildForCommands: Callable[[int], str],
         orbatWeeklyScheduleConfig: Callable[[], tuple[int, int, int]],
+        trainingLogCoordinator: Any | None = None,
         serverSafetyService: Any | None = None,
         gitUpdateCoordinator: Any | None = None,
         generalErrorLogPath: str = "",
@@ -1252,6 +1254,7 @@ class TextCommandRouter:
         self.isGuildAllowedForCommands = isGuildAllowedForCommands
         self.allowGuildForCommands = allowGuildForCommands
         self.orbatWeeklyScheduleConfig = orbatWeeklyScheduleConfig
+        self.trainingLogCoordinator = trainingLogCoordinator
         self.serverSafetyService = serverSafetyService
         self.gitUpdateCoordinator = gitUpdateCoordinator
         self.generalErrorLogPath = str(generalErrorLogPath or "").strip()
@@ -1267,13 +1270,32 @@ class TextCommandRouter:
         actor: discord.Member,
         sourceMessage: discord.Message | None = None,
     ) -> tuple[bool, str]:
-        pendingRoleId = getattr(self.config, "pendingBgRoleId", None)
+        pendingRoleId = orgProfiles.getOrganizationValue(
+            self.config,
+            "pendingBgRoleId",
+            guildId=int(getattr(guild, "id", 0) or 0),
+            default=None,
+        )
         try:
             pendingRoleIdInt = int(pendingRoleId) if pendingRoleId else 0
         except (TypeError, ValueError):
             pendingRoleIdInt = 0
 
-        sourceGuildId = getattr(self.config, "bgCheckSourceGuildId", None) or getattr(self.config, "serverId", None) or guild.id
+        sourceGuildId = (
+            orgProfiles.getOrganizationValue(
+                self.config,
+                "bgCheckSourceGuildId",
+                guildId=int(getattr(guild, "id", 0) or 0),
+                default=None,
+            )
+            or orgProfiles.getOrganizationValue(
+                self.config,
+                "primaryGuildId",
+                guildId=int(getattr(guild, "id", 0) or 0),
+                default=getattr(self.config, "serverId", None),
+            )
+            or guild.id
+        )
         try:
             sourceGuildIdInt = int(sourceGuildId)
         except (TypeError, ValueError):
@@ -1915,6 +1937,61 @@ class TextCommandRouter:
             response = "Added this server to Jane's allowed guild list."
         else:
             response = "Jane could not add this server to the allowed guild list."
+
+        try:
+            await message.channel.send(
+                response,
+                allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+            )
+        except Exception:
+            pass
+        return True
+
+    async def handleMirrorTrainingHistory(self, message: discord.Message) -> bool:
+        if message.author.bot or not message.content:
+            return False
+
+        token = self.firstLowerToken(message.content or "")
+        if token != "!mirrortraininghistory":
+            return False
+
+        if not self._shutdownAllowed(int(message.author.id)):
+            return True
+
+        if not message.guild or not isinstance(message.author, discord.Member):
+            return True
+
+        if self.trainingLogCoordinator is None:
+            try:
+                await message.channel.send(
+                    "Training history mirror is unavailable on this build.",
+                    allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+                )
+            except Exception:
+                pass
+            return True
+
+        if message.guild.me and message.channel.permissions_for(message.guild.me).manage_messages:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+
+        try:
+            await message.channel.send(
+                "Running the training history mirror now.",
+                allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+            )
+        except Exception:
+            pass
+
+        try:
+            succeeded, response = await self.trainingLogCoordinator.runManualMirrorBackfillOnce(
+                userId=int(message.author.id),
+            )
+        except Exception as exc:
+            response = f"Training history mirror failed: `{exc.__class__.__name__}`"
+            succeeded = False
 
         try:
             await message.channel.send(

@@ -250,3 +250,35 @@ async def editOwnedWebhookMessage(
     except Exception:
         log.exception("Failed to edit owned webhook message for %s.", webhookName)
         return False
+
+
+async def deleteOwnedWebhookMessage(
+    *,
+    botClient: discord.Client,
+    message: discord.Message,
+    webhookName: str,
+    reason: str = "Jane webhook message delete",
+) -> bool:
+    try:
+        webhook, thread = await _getOwnedWebhook(
+            botClient=botClient,
+            channel=message.channel,
+            webhookName=webhookName,
+            reason=reason,
+        )
+        if webhook is None:
+            return False
+
+        kwargs: dict[str, Any] = {}
+        if thread is not None:
+            kwargs["thread"] = thread
+        await taskBudgeter.runDiscord(lambda: webhook.delete_message(int(message.id), **kwargs))
+        return True
+    except (discord.NotFound, discord.Forbidden):
+        return False
+    except discord.HTTPException:
+        log.warning("Failed to delete owned webhook message for %s.", webhookName, exc_info=True)
+        return False
+    except Exception:
+        log.exception("Failed to delete owned webhook message for %s.", webhookName)
+        return False

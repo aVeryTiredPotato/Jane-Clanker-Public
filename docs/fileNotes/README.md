@@ -10,10 +10,14 @@ They are closer to:
 - what tends to break
 - where to look before editing it
 
-Right now the first notes are:
+Current notes:
 
 - [botPy.md](botPy.md)
-- [textCommands.md](textCommands.md)
+- [recruitmentSheets.md](recruitmentSheets.md)
+- [serverSafetyCog.md](serverSafetyCog.md)
+- [sqlite.md](sqlite.md)
 - [snapshotRestore.md](snapshotRestore.md)
+- [textCommands.md](textCommands.md)
+- [trainingLogService.md](trainingLogService.md)
 
 The goal is not to document everything at once. The goal is to slowly make the repo less hostile to new people.

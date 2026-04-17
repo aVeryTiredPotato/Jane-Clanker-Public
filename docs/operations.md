@@ -1,6 +1,6 @@
 # Operations
 
-This is the short practical doc for running Jane without having to remember every weird little detail.
+This is the short practical doc for running Jane without remembering every operational detail.
 
 ## Useful Runtime Tools
 
@@ -28,7 +28,16 @@ Server safety and snapshots live under:
 - `backups/serverSnapshots`
 - `backups/serverSnapshotsOffsite`
 
-Quarantine is currently a special case operationally and has gone through a few iterations. It is currently disabled due to a uhhhhhhhhhhhhhh... mistake :sob:
+The practical recovery runbook is [Server Recovery](features/serverRecovery.md).
+
+Quarantine is currently disabled by configuration because it is high-risk and has had operational incidents. Treat any re-enable work as destructive/recovery work.
+
+## High-Risk Feature Runbooks
+
+- [Sessions And BG Checks](features/sessions.md)
+- [Training Log Mirror](features/trainingLogMirror.md)
+- [Best Of](features/bestOf.md)
+- [Auto Git Update](autoGitUpdate.md)
 
 ## Common Operational Notes
 
@@ -70,11 +79,11 @@ Usually it is one of these:
 - keep `.env` host-specific
 - keep `config.py` in sync with the actual server
 - avoid absolute machine paths
-- don’t treat the public export like production source
+- don't treat the public export like production source
 - test risky changes on the test server first when possible
 
 ## What Not To Do
 
-- don’t turn `!janeTerminal` into a remote shell
-- don’t assume old backup JSON metadata paths are meaningful on a new machine
-- don’t let auto-update become “blindly trust every push forever”
+- don't turn `!janeTerminal` into a remote shell
+- don't assume old backup JSON metadata paths are meaningful on a new machine
+- don't let auto-update become "blindly trust every push forever"

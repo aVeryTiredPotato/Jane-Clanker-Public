@@ -13,6 +13,7 @@ import config
 from features.operations.curfew import service as curfewService
 from runtime import cogGuards as runtimeCogGuards
 from runtime import interaction as interactionRuntime
+from runtime import orgProfiles
 from runtime import timezones as timezoneRuntime
 from runtime import viewBases as runtimeViewBases
 
@@ -60,9 +61,9 @@ class CurfewAddModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not await self.cog._requireAdmin(interaction):
             return
-        target = await self.cog._resolveMemberFromInput(interaction.guild, str(self.userInput.value or ""))
-        if target is None:
-            await self.cog._safeReply(interaction, "I couldn't find that server member.")
+        targetUserId = await self.cog._resolveUserIdFromInput(interaction.guild, str(self.userInput.value or ""))
+        if targetUserId <= 0:
+            await self.cog._safeReply(interaction, "I couldn't find that user. A mention or user ID always works.")
             return
 
         timezoneName = _normalizeTimezoneName(str(self.timezoneInput.value or ""))
@@ -72,21 +73,29 @@ class CurfewAddModal(discord.ui.Modal):
             await self.cog._safeReply(interaction, str(exc))
             return
 
+        guildId = int(interaction.guild_id or 0)
+        orgKey = self.cog._curfewOrgKeyForGuild(guildId)
         await curfewService.upsertCurfewTarget(
-            guildId=int(interaction.guild_id or 0),
-            userId=int(target.id),
+            guildId=guildId,
+            userId=int(targetUserId),
             timezoneName=timezoneLabel,
             addedBy=int(interaction.user.id),
+            orgKey=orgKey,
         )
-        appliedNow = await self.cog._enforceSingleTarget(
-            int(interaction.guild_id or 0),
-            int(target.id),
+        checkedGuilds, appliedNow = await self.cog._enforceTargetAcrossScope(
+            orgKey,
+            guildId,
+            int(targetUserId),
             timezoneLabel,
         )
-        nowText = " Curfew timeout was applied immediately." if appliedNow else ""
+        nowText = (
+            f" Curfew timeout was applied immediately in {appliedNow}/{checkedGuilds} server(s)."
+            if appliedNow
+            else ""
+        )
         await self.cog._safeReply(
             interaction,
-            f"Curfew enabled for {target.mention} in `{timezoneLabel}`.{nowText}",
+            f"Curfew enabled for <@{targetUserId}> in `{timezoneLabel}` across `{self.cog._curfewScopeLabel(orgKey)}`.{nowText}",
         )
         await self.cog.refreshPanelMessageById(interaction, messageId=self.panelMessageId)
 
@@ -108,17 +117,20 @@ class CurfewRemoveModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not await self.cog._requireAdmin(interaction):
             return
-        target = await self.cog._resolveMemberFromInput(interaction.guild, str(self.userInput.value or ""))
-        if target is None:
-            await self.cog._safeReply(interaction, "I couldn't find that server member.")
+        targetUserId = await self.cog._resolveUserIdFromInput(interaction.guild, str(self.userInput.value or ""))
+        if targetUserId <= 0:
+            await self.cog._safeReply(interaction, "I couldn't find that user. A mention or user ID always works.")
             return
+        guildId = int(interaction.guild_id or 0)
+        orgKey = self.cog._curfewOrgKeyForGuild(guildId)
         await curfewService.disableCurfewTarget(
-            guildId=int(interaction.guild_id or 0),
-            userId=int(target.id),
+            guildId=guildId,
+            userId=int(targetUserId),
+            orgKey=orgKey,
         )
         await self.cog._safeReply(
             interaction,
-            f"Curfew disabled for {target.mention}.",
+            f"Curfew disabled for <@{targetUserId}> across `{self.cog._curfewScopeLabel(orgKey)}`.",
         )
         await self.cog.refreshPanelMessageById(interaction, messageId=self.panelMessageId)
 
@@ -178,6 +190,7 @@ class CurfewCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         self._curfewTask: asyncio.Task | None = None
 
     async def cog_load(self) -> None:
+        await self._migrateKnownCurfewRows()
         if self._curfewTask is None or self._curfewTask.done():
             self._curfewTask = asyncio.create_task(self._runCurfewLoop())
 
@@ -185,6 +198,54 @@ class CurfewCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         if self._curfewTask and not self._curfewTask.done():
             self._curfewTask.cancel()
         self._curfewTask = None
+
+    def _curfewOrgKeyForGuild(self, guildId: int) -> str:
+        parsedGuildId = int(guildId or 0)
+        if parsedGuildId > 0 and orgProfiles.isGuildAssignedToOrganization(config, parsedGuildId):
+            return orgProfiles.getOrganizationKeyForGuild(config, parsedGuildId)
+        return f"GUILD_{parsedGuildId}" if parsedGuildId > 0 else ""
+
+    def _curfewProfileForKey(self, orgKey: str) -> orgProfiles.OrganizationProfile | None:
+        normalizedOrgKey = str(orgKey or "").strip().upper()
+        if not normalizedOrgKey or normalizedOrgKey.startswith("GUILD_"):
+            return None
+        return orgProfiles.getOrganizationProfile(config, orgKey=normalizedOrgKey)
+
+    def _curfewScopeLabel(self, orgKey: str) -> str:
+        profile = self._curfewProfileForKey(orgKey)
+        if profile is not None:
+            return profile.label
+        return "this server"
+
+    def _curfewGuildIdsForScope(self, orgKey: str, sourceGuildId: int) -> list[int]:
+        profile = self._curfewProfileForKey(orgKey)
+        rawGuildIds = list(profile.guildIds) if profile is not None else [int(sourceGuildId or 0)]
+        out: list[int] = []
+        for rawGuildId in rawGuildIds:
+            guildId = int(rawGuildId or 0)
+            if guildId <= 0 or guildId in out:
+                continue
+            if self.bot.get_guild(guildId) is None:
+                continue
+            out.append(guildId)
+        if not out and int(sourceGuildId or 0) > 0:
+            out.append(int(sourceGuildId))
+        return out
+
+    async def _migrateKnownCurfewRows(self) -> None:
+        for profile in orgProfiles.getOrganizationProfiles(config).values():
+            for guildId in profile.guildIds:
+                try:
+                    await curfewService.migrateGuildCurfewTargetsToOrg(
+                        guildId=int(guildId),
+                        orgKey=profile.key,
+                    )
+                except Exception:
+                    log.exception(
+                        "Failed to migrate curfew rows for guild=%s org=%s.",
+                        int(guildId or 0),
+                        profile.key,
+                    )
 
     async def _getMember(self, guild: discord.Guild, userId: int) -> discord.Member | None:
         member = guild.get_member(int(userId))
@@ -219,6 +280,18 @@ class CurfewCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
             guild.members,
         )
         return partial
+
+    async def _resolveUserIdFromInput(self, guild: discord.Guild | None, rawValue: str) -> int:
+        value = str(rawValue or "").strip()
+        if not value:
+            return 0
+        mentionMatch = _userMentionRegex.match(value)
+        if mentionMatch:
+            return int(mentionMatch.group(1))
+        if value.isdigit():
+            return int(value)
+        member = await self._resolveMemberFromInput(guild, value)
+        return int(member.id) if member is not None else 0
 
     async def _enforceSingleTarget(
         self,
@@ -255,12 +328,29 @@ class CurfewCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             return False
 
-        await curfewService.setCurfewAppliedAt(
-            guildId=int(guildId),
-            userId=int(userId),
-            appliedAtIso=nowUtc.isoformat(),
-        )
         return True
+
+    async def _enforceTargetAcrossScope(
+        self,
+        orgKey: str,
+        sourceGuildId: int,
+        userId: int,
+        timezoneName: str,
+    ) -> tuple[int, int]:
+        checkedGuilds = 0
+        applied = 0
+        for guildId in self._curfewGuildIdsForScope(orgKey, sourceGuildId):
+            checkedGuilds += 1
+            if await self._enforceSingleTarget(guildId, userId, timezoneName):
+                applied += 1
+        if applied > 0:
+            await curfewService.setCurfewAppliedAt(
+                guildId=int(sourceGuildId),
+                userId=int(userId),
+                appliedAtIso=datetime.now(timezone.utc).isoformat(),
+                orgKey=orgKey,
+            )
+        return checkedGuilds, applied
 
     async def _enforceCurfewOnce(self) -> tuple[int, int]:
         rows = await curfewService.listActiveCurfewTargets()
@@ -272,13 +362,26 @@ class CurfewCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
             timezoneName = str(row.get("timezone") or "").strip()
             if guildId <= 0 or userId <= 0 or not timezoneName:
                 continue
+            orgKey = str(row.get("orgKey") or "").strip().upper()
+            if not orgKey:
+                orgKey = self._curfewOrgKeyForGuild(guildId)
+                try:
+                    await curfewService.migrateGuildCurfewTargetsToOrg(guildId=guildId, orgKey=orgKey)
+                except Exception:
+                    log.exception("Failed to backfill curfew org key for guild=%s user=%s", guildId, userId)
             checked += 1
             try:
-                if await self._enforceSingleTarget(guildId, userId, timezoneName):
-                    applied += 1
+                _, appliedForTarget = await self._enforceTargetAcrossScope(
+                    orgKey,
+                    guildId,
+                    userId,
+                    timezoneName,
+                )
+                applied += appliedForTarget
             except Exception:
                 log.exception(
-                    "Curfew enforcement failed for guild=%s user=%s timezone=%s",
+                    "Curfew enforcement failed for org=%s sourceGuild=%s user=%s timezone=%s",
+                    orgKey,
                     guildId,
                     userId,
                     timezoneName,
@@ -301,17 +404,21 @@ class CurfewCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         return await self._requireAdministrator(interaction) is not None
 
     async def buildCurfewPanelEmbed(self, guild: discord.Guild, *, noticeText: str = "") -> discord.Embed:
+        orgKey = self._curfewOrgKeyForGuild(int(guild.id))
+        scopeGuildIds = self._curfewGuildIdsForScope(orgKey, int(guild.id))
         rows = await curfewService.listGuildCurfewTargets(
             guildId=int(guild.id),
             includeDisabled=False,
+            orgKey=orgKey,
         )
         embed = discord.Embed(
             title="Curfew Panel",
             color=discord.Color.orange(),
-            description="Manage daily curfew auto-timeouts from one panel.",
+            description="Manage daily curfew auto-timeouts from one panel. Targets apply across this group's Discord servers.",
         )
         embed.add_field(name="Status", value="Enabled" if rows else "No active targets", inline=True)
         embed.add_field(name="Active Targets", value=str(len(rows)), inline=True)
+        embed.add_field(name="Scope", value=f"{self._curfewScopeLabel(orgKey)} ({len(scopeGuildIds)} server(s))", inline=True)
         intervalSec = max(30, int(getattr(config, "curfewCheckIntervalSec", 60) or 60))
         embed.add_field(name="Check Interval", value=f"{intervalSec}s", inline=True)
 
@@ -329,7 +436,7 @@ class CurfewCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         else:
             embed.add_field(
                 name="Tracked Users",
-                value="No active curfew targets in this server.",
+                value="No active curfew targets in this group.",
                 inline=False,
             )
 

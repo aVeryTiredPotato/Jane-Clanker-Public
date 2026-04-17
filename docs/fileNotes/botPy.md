@@ -33,12 +33,12 @@ This is the main text-command routing path.
 It does a few important things in order:
 - handles paused-runtime behavior
 - checks guild allowlisting
-- routes hidden/manual commands like `!copyserver`, `!janeterminal`, `!shutdown`, and `?janeRuntime`
+- routes hidden/manual commands like `!janeterminal`, `!shutdown`, and `?janeRuntime`
 - falls back to normal command processing
 
 If a text command "just does nothing," this is usually the first file to check.
 
-### Tiny wrapper helpers like `_handleCopyServerCommand(...)`
+### Tiny Wrapper Helpers For Manual Commands
 
 These are just thin routing functions that hand off to the text-command router in [`runtime/textCommands.py`](../../runtime/textCommands.py).
 

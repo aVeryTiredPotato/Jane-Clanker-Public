@@ -8,6 +8,8 @@ from typing import Any
 
 import discord
 
+from runtime import orgProfiles
+
 log = logging.getLogger(__name__)
 
 try:
@@ -235,7 +237,15 @@ class BootstrapCoordinator:
             except Exception:
                 log.exception("Failed to evaluate startup greeting cooldown.")
 
-        channelId = int(getattr(self.config, "startupGreetingChannelId", 0) or 0)
+        channelId = int(
+            orgProfiles.getOrganizationValue(
+                self.config,
+                "startupGreetingChannelId",
+                orgKey=orgProfiles.getDefaultOrganizationKey(self.config),
+                default=0,
+            )
+            or 0
+        )
         if channelId <= 0:
             self.startupGreetingSent = True
             return

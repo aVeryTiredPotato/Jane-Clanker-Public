@@ -70,7 +70,8 @@ async def initDb():
             sessionType TEXT NOT NULL,
             hostId INTEGER NOT NULL,
             passwordHash TEXT NOT NULL,
-            status TEXT NOT NULL,              -- OPEN/GRADING/FINISHED/CANCELED
+            maxAttendeeLimit INTEGER DEFAULT 30,
+            status TEXT NOT NULL,              -- OPEN/GRADING/FINISHED/CANCELED/FULL
             gradingIndex INTEGER NOT NULL DEFAULT 0,
             createdAt TEXT NOT NULL DEFAULT (datetime('now')),
             finishedAt TEXT,
@@ -78,6 +79,7 @@ async def initDb():
             bgQueueMinorMessageId INTEGER
         );
         """)
+        await _executeOptional("ALTER TABLE sessions ADD COLUMN maxAttendeeLimit INTEGER DEFAULT 30")
         await _executeOptional("ALTER TABLE sessions ADD COLUMN bgQueueMessageId INTEGER")
         await _executeOptional("ALTER TABLE sessions ADD COLUMN bgQueueMinorMessageId INTEGER")
         await db.execute("""
@@ -544,6 +546,7 @@ async def initDb():
         await _executeOptional("ALTER TABLE anrd_payment_requests ADD COLUMN payoutSynced INTEGER NOT NULL DEFAULT 0")
         await db.execute("""
         CREATE TABLE IF NOT EXISTS curfew_targets (
+            orgKey TEXT NOT NULL DEFAULT '',
             guildId INTEGER NOT NULL,
             userId INTEGER NOT NULL,
             timezone TEXT NOT NULL,
@@ -555,6 +558,7 @@ async def initDb():
             PRIMARY KEY (guildId, userId)
         );
         """)
+        await _executeOptional("ALTER TABLE curfew_targets ADD COLUMN orgKey TEXT NOT NULL DEFAULT ''")
         await db.execute("""
         CREATE TABLE IF NOT EXISTS jail_records (
             recordId INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -980,6 +984,7 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_anrd_payment_status ON anrd_payment_requests(status)",
             "CREATE INDEX IF NOT EXISTS idx_anrd_payment_review_msg ON anrd_payment_requests(reviewMessageId)",
             "CREATE INDEX IF NOT EXISTS idx_curfew_targets_enabled ON curfew_targets(enabled, guildId, userId)",
+            "CREATE INDEX IF NOT EXISTS idx_curfew_targets_org_enabled ON curfew_targets(orgKey, enabled, userId)",
             "CREATE INDEX IF NOT EXISTS idx_jail_records_active ON jail_records(guildId, userId, status, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_best_of_polls_status ON best_of_polls(guildId, status, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_best_of_candidates_poll_rank ON best_of_poll_candidates(pollId, priorityRank, sortOrder)",

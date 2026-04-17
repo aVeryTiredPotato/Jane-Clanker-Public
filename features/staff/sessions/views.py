@@ -1,7 +1,7 @@
 ﻿import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Any
 
 import discord
 from discord import ui
@@ -245,6 +245,7 @@ async def ensureBgReviewBuckets(
                 configModule=config,
                 resolveOrbatAgeGroup=_resolveOrbatAgeGroupForUser,
                 userId=userId,
+                guildId=int(getattr(sourceGuild, "id", 0) or 0),
             )
             reviewBucketsByUserId[userId] = bucket
         bucketCounts[bucket] = bucketCounts.get(bucket, 0) + 1
@@ -506,7 +507,9 @@ async def _safeInteractionDefer(
 
 
 async def _safeInteractionEditMessage(
+    self,
     interaction: discord.Interaction,
+    clearEmbed: bool,
     *,
     content: Optional[str] = None,
     embed: Optional[discord.Embed] = None,
@@ -515,25 +518,41 @@ async def _safeInteractionEditMessage(
     kwargs: dict[str, Any] = {}
     if content is not None:
         kwargs["content"] = content
-    if embed is not None:
+    if clearEmbed is True:
+        kwargs["embed"] = None
+    if embed is not None and clearEmbed is not True:
         kwargs["embed"] = embed
     if view is not None:
         kwargs["view"] = view
 
-    if not interaction.response.is_done():
-        try:
-            await interaction.response.edit_message(**kwargs)
-            return True
-        except (discord.NotFound, discord.HTTPException) as exc:
-            if not interactionRuntime.isUnknownInteractionError(exc):
-                return False
-        except TypeError:
-            # Ignore incompatible kwargs and fall through to message edit.
-            pass
+    try:
+        await interaction.response.edit_message(**kwargs)
+        return True
+    except discord.InteractionResponded:
+        await interaction.edit_original_response(**kwargs)
+        return True
+    except (discord.NotFound, discord.HTTPException) as exc:
+        if not interactionRuntime.isUnknownInteractionError(exc):
+            return False
+    except TypeError:
+        # Ignore incompatible kwargs and fall through to message edit.
+        pass
 
     if interaction.message is not None:
         return await interactionRuntime.safeMessageEdit(interaction.message, **kwargs)
-    return False
+
+    if not hasattr(self, "_original_response") or self._original_response is None: # works only if the interaction reffers to message creation, not if the interaction is for example button click
+        try:
+            self._original_response = await interaction.original_response()
+        except:
+            self._original_response = None
+            pass
+
+    try:
+        await self._original_response.edit(**kwargs)
+        return True
+    except (discord.NotFound, discord.HTTPException):
+        return False
 
 
 async def _sendEphemeralReply(

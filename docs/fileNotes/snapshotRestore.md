@@ -30,7 +30,7 @@ At a high level, it does:
 7. optionally restore member roles
 8. return a big result payload
 
-That result payload is what `!copyserver` and the server-safety restore flows read to decide what message Jane should send next.
+That result payload is what the server-safety restore flows read to decide what message Jane should send next.
 
 ### `applySnapshotPathToGuild(...)`
 
@@ -61,9 +61,6 @@ So if something breaks in "restore," this file usually tells you which lower lay
 
 - `cleanupExtras=True` is not a cute option.
   It means Jane is allowed to delete structure that is not in the snapshot.
-
-- `restoreMembers=False` matters for copyserver.
-  That is what keeps the test server from trying to mirror everybody's live role assignments.
 
 ## Good Small Edits Here
 

@@ -11,6 +11,7 @@ from typing import Callable
 import discord
 
 import config
+from runtime import permissions as runtimePermissions
 from runtime import webhooks as runtimeWebhooks
 
 
@@ -78,6 +79,16 @@ _skinCommandNextAllowedAtByUser: dict[int, datetime] = {}
 _janeGreetingNextAllowedAtByUser: dict[int, datetime] = {}
 _recipeMapCache: dict[str, tuple[str, str]] | None = None
 _sixtySevenStreakByChannelUser: dict[tuple[int, int], int] = {}
+_killQuotes = [
+    "{target} is being used to weigh down the reactor rods.",
+    "{target} is being sent to manually inspect the turbine blades.",
+    "{target} has won a trip to the spent fuel pool.",
+    "{target} was sent to Turbine Hall with Turbines at 4000 RPM and climbing.",
+    "{target} is being reassigned as biological shielding.",
+    "{target} was locked in the control room with JRO's during a WN raid.",
+    "{target} is being placed inside the control room microwave.",
+    "{target} will be converted into a backup coolant system.",
+]
 
 
 def _normalizeText(value: str) -> str:
@@ -327,6 +338,76 @@ async def _sendSkinWebhook(
         reason="Skin command output",
     )
     return sentMessage is not None
+
+
+async def _sendKillWebhook(
+    message: discord.Message,
+    botClient: discord.Client,
+    *,
+    embed: discord.Embed,
+) -> bool:
+    if not message.guild or not botClient.user:
+        return False
+    sentMessage = await runtimeWebhooks.sendOwnedWebhookMessageDetailed(
+        botClient=botClient,
+        channel=message.channel,
+        webhookName="Jane Clanker",
+        embed=embed,
+        username=str(botClient.user.display_name or botClient.user.name or "Jane Clanker"),
+        avatarUrl=botClient.user.display_avatar.url,
+        reason="Kill command output",
+    )
+    return sentMessage is not None
+
+
+async def handleKillCommand(message: discord.Message, botClient: discord.Client) -> bool:
+    if message.author.bot or not message.content:
+        return False
+    if not message.guild or not isinstance(message.author, discord.Member):
+        return False
+
+    raw = message.content.strip()
+    if raw.split(maxsplit=1)[0].lower() != "!kill":
+        return False
+
+    if not runtimePermissions.hasMiddleHighRankRole(message.author):
+        await message.channel.send("Only MR/HR roles can use `!kill`.")
+        return True
+
+    parts = raw.split(maxsplit=1)
+    target: discord.Member | None = None
+    if len(parts) >= 2 and parts[1].strip():
+        try:
+            target = await _resolveMemberFromQuery(message.guild, parts[1].strip())
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            target = None
+    else:
+        target = await _resolveReplyTarget(message)
+
+    if target is None:
+        await message.channel.send("Usage: `!kill @user`")
+        return True
+
+    nowUtc = datetime.now(timezone.utc)
+    scheduledAt = nowUtc + timedelta(seconds=random.randint(60, 3600))
+    timestampText = f"<t:{int(scheduledAt.timestamp())}:R>"
+    quote = random.choice(_killQuotes).format(target=target.mention)
+
+    embed = discord.Embed(
+        title="Execution Scheduled",
+        description=f"**{quote}**\n\n-# {target.mention}'s execution takes place {timestampText}.",
+        color=discord.Color.orange(),
+        timestamp=nowUtc,
+    )
+    embed.set_footer(text=f"Command used by {message.author.display_name}")
+
+    sentViaWebhook = await _sendKillWebhook(message, botClient, embed=embed)
+    if not sentViaWebhook:
+        await message.channel.send(
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+        )
+    return True
 
 
 async def handleSkinCommand(
