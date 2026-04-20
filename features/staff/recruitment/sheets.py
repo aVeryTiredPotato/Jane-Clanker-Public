@@ -1627,13 +1627,7 @@ def applyApprovedLog(
     return True
 
 
-def applyApprovedLogsBatch(
-    updates: list[dict],
-    organizeAfter: bool = True,
-) -> dict:
-    if not updates:
-        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
-
+def _aggregateApprovedLogUpdates(updates: list[dict]) -> dict[str, dict[str, int | str]]:
     aggregate: dict[str, dict[str, int | str]] = {}
     for raw in updates:
         if not isinstance(raw, dict):
@@ -1668,15 +1662,10 @@ def applyApprovedLogsBatch(
             slot["pointsDelta"] = int(slot.get("pointsDelta", 0)) + pointsDelta
             slot["patrolDelta"] = int(slot.get("patrolDelta", 0)) + patrolDelta
             slot["hostedPatrolDelta"] = int(slot.get("hostedPatrolDelta", 0)) + hostedPatrolDelta
+    return aggregate
 
-    if not aggregate:
-        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
 
-    service = _getService()
-    sheetId = _spreadsheetId()
-    sheetTabId = _getSheetTabId(service)
-    header = _loadHeaderMap(service)
-
+def _loadWritableMemberRowsByUsername(service, sheetId: str, header: Dict[str, str]) -> dict[str, int]:
     usernameCol = header["robloxUsername"]
     rankCol = header["rsRank"]
     usernameAndRank = (
@@ -1704,7 +1693,15 @@ def applyApprovedLogsBatch(
         if not _isWritableMemberRow(usernameCell, rankCell):
             continue
         rowByUsername[_usernameLookupKey(usernameCell)] = idx
+    return rowByUsername
 
+
+def _resolveApprovedLogRows(
+    service,
+    header: Dict[str, str],
+    aggregate: dict[str, dict[str, int | str]],
+    rowByUsername: dict[str, int],
+) -> dict[int, dict[str, int | str]]:
     updatesByRow: dict[int, dict[str, int | str]] = {}
     for key, entry in aggregate.items():
         row = rowByUsername.get(key)
@@ -1715,11 +1712,15 @@ def applyApprovedLogsBatch(
             rowByUsername[key] = row
         entry["robloxUsername"] = _cleanRobloxUsername(entry.get("robloxUsername"))
         updatesByRow[row] = entry
+    return updatesByRow
 
-    if not updatesByRow:
-        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
 
-    rows = sorted(updatesByRow.keys())
+def _loadApprovedLogCurrentRows(
+    service,
+    sheetId: str,
+    header: Dict[str, str],
+    rows: list[int],
+) -> dict[int, dict[str, str]]:
     perRowRanges: list[str] = []
     rangeMeta: list[tuple[int, str]] = []
     keys = ("rsRank", "monthly", "allTime", "patrols", "quota")
@@ -1741,7 +1742,15 @@ def applyApprovedLogsBatch(
         values = fetchedRanges[idx].get("values", []) if idx < len(fetchedRanges) else []
         value = values[0][0] if values and values[0] else ""
         currentByRow.setdefault(row, {})[key] = str(value)
+    return currentByRow
 
+
+def _buildApprovedLogBatchData(
+    header: Dict[str, str],
+    rows: list[int],
+    currentByRow: dict[int, dict[str, str]],
+    updatesByRow: dict[int, dict[str, int | str]],
+) -> tuple[list[dict], list[int]]:
     batchData: list[dict] = []
     touchedRows: list[int] = []
     for row in rows:
@@ -1768,6 +1777,33 @@ def applyApprovedLogsBatch(
         if promotedRank and _normalize(promotedRank) != _normalize(currentRank):
             batchData.append({"range": _range(header["rsRank"], row), "values": [[promotedRank]]})
         touchedRows.append(row)
+    return batchData, touchedRows
+
+
+def applyApprovedLogsBatch(
+    updates: list[dict],
+    organizeAfter: bool = True,
+) -> dict:
+    if not updates:
+        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
+
+    aggregate = _aggregateApprovedLogUpdates(updates)
+    if not aggregate:
+        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
+
+    service = _getService()
+    sheetId = _spreadsheetId()
+    sheetTabId = _getSheetTabId(service)
+    header = _loadHeaderMap(service)
+
+    rowByUsername = _loadWritableMemberRowsByUsername(service, sheetId, header)
+    updatesByRow = _resolveApprovedLogRows(service, header, aggregate, rowByUsername)
+    if not updatesByRow:
+        return {"updatedUsers": 0, "updatedRows": 0, "organized": 0}
+
+    rows = sorted(updatesByRow.keys())
+    currentByRow = _loadApprovedLogCurrentRows(service, sheetId, header, rows)
+    batchData, touchedRows = _buildApprovedLogBatchData(header, rows, currentByRow, updatesByRow)
 
     service.spreadsheets().values().batchUpdate(
         spreadsheetId=sheetId,

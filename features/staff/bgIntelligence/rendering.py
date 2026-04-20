@@ -332,6 +332,48 @@ def _externalSourceLines(report: Any) -> list[str]:
     return rows
 
 
+def _externalDetailForSource(report: Any, sourceName: str) -> dict[str, Any] | None:
+    target = str(sourceName or "").strip().lower()
+    if not target:
+        return None
+    for detail in list(getattr(report, "externalSourceDetails", None) or []):
+        if not isinstance(detail, dict):
+            continue
+        if str(detail.get("source") or "").strip().lower() == target:
+            return detail
+    return None
+
+
+def _taseOverviewLine(report: Any) -> str:
+    detail = _externalDetailForSource(report, "TASE")
+    if not detail:
+        return ""
+    status = str(detail.get("status") or "SKIPPED").strip().upper()
+    summary = detail.get("summary") if isinstance(detail.get("summary"), dict) else {}
+    reason = str(summary.get("reason") or "").strip().lower()
+    taseMatches = [
+        match
+        for match in list(getattr(report, "externalSourceMatches", None) or [])
+        if isinstance(match, dict) and str(match.get("source") or "").strip().lower() == "tase"
+    ]
+    if status == "OK":
+        if taseMatches:
+            return f"TASE checked and matched **{len(taseMatches):,}** record(s)."
+        return "TASE checked: no records matched."
+    if status == "ERROR":
+        return "TASE check failed."
+    if status == "SKIPPED":
+        if reason == "missing_token":
+            return "TASE was not checked because no token is configured."
+        if reason == "no_discord_user":
+            return "TASE was not checked because no Discord ID was provided."
+        if reason == "disabled":
+            return "TASE is disabled."
+    if status == "PARTIAL":
+        return "TASE was partially checked; expand this section for details."
+    return ""
+
+
 def _connectionDetailLines(report: Any) -> list[str]:
     rows = [_overviewConnectionLine(report)]
     matches = [match for match in list(getattr(report, "externalSourceMatches", None) or []) if isinstance(match, dict)]
@@ -731,15 +773,21 @@ def _overviewClanningLine(report: Any) -> str:
     matches = list(getattr(report, "externalSourceMatches", None) or [])
     flaggedGroups = list(getattr(report, "flaggedGroups", None) or [])
     totalRecords = len(matches) + len(flaggedGroups)
+    taseLine = _taseOverviewLine(report)
     if totalRecords:
-        return f"Known clanning records found: **{totalRecords:,}**."
+        suffix = f" {taseLine}" if taseLine else ""
+        return f"Known clanning records found: **{totalRecords:,}**.{suffix}"
     if matches:
         return f"External safety sources found **{len(matches):,}** matched record(s)."
     externalStatus = _scanStatus(getattr(report, "externalSourceStatus", "SKIPPED"))
     if externalStatus in {"OK", "PARTIAL"}:
-        return "No clanning records found."
+        suffix = f" {taseLine}" if taseLine else ""
+        return f"No clanning records found.{suffix}"
     if externalStatus == "ERROR":
-        return "Clanning record sources could not be checked."
+        suffix = f" {taseLine}" if taseLine else ""
+        return f"Clanning record sources could not be checked.{suffix}"
+    if taseLine:
+        return taseLine
     return "No clanning records found."
 
 

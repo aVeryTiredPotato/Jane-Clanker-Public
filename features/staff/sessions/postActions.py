@@ -6,11 +6,10 @@ from typing import Awaitable, Callable, Optional
 import discord
 
 import config
+from features.staff.recruitment import outputs as recruitmentOutputs
 from features.staff.recruitment import rendering as recruitmentRendering
 from features.staff.recruitment import service as recruitmentService
-from features.staff.recruitment import sheets as recruitmentSheets
 from runtime import orgProfiles
-from runtime import taskBudgeter
 from features.staff.sessions import roblox
 from features.staff.sessions import service as sessionService
 
@@ -76,8 +75,7 @@ async def applyRecruitmentOrientationBonus(
     if not updates:
         return
 
-    sheetUpdates: list[dict] = []
-    lookupBySubmitterId: dict[int, Optional[str]] = {}
+    sheetEntries: list[recruitmentOutputs.SheetLogEntry] = []
     for item in updates:
         submission = item["submission"]
         await updateRecruitmentSubmissionMessage(
@@ -87,18 +85,13 @@ async def applyRecruitmentOrientationBonus(
         )
         if item.get("bonusCredited"):
             submitterId = int(submission["submitterId"])
-            if submitterId not in lookupBySubmitterId:
-                lookup = await roblox.fetchRobloxUser(submitterId)
-                lookupBySubmitterId[submitterId] = lookup.robloxUsername or None
-            robloxUsername = lookupBySubmitterId.get(submitterId)
-            if robloxUsername:
-                sheetUpdates.append(
-                    {
-                        "robloxUsername": robloxUsername,
-                        "pointsDelta": int(bonus),
-                        "patrolDelta": 0,
-                    }
+            sheetEntries.append(
+                recruitmentOutputs.SheetLogEntry(
+                    discordUserId=submitterId,
+                    pointsDelta=int(bonus),
+                    patrolDelta=0,
                 )
+            )
             await dmRecruiterBonus(
                 bot,
                 submitterId,
@@ -106,15 +99,8 @@ async def applyRecruitmentOrientationBonus(
                 bonus,
                 dmUser=dmUser,
             )
-    if sheetUpdates:
-        try:
-            await taskBudgeter.runSheetsThread(
-                recruitmentSheets.applyApprovedLogsBatch,
-                sheetUpdates,
-                True,
-            )
-        except Exception:
-            log.exception("Recruitment sheet bonus batch sync failed for recruit %s", recruitUserId)
+    if sheetEntries:
+        await recruitmentOutputs.syncApprovedLogEntriesToSheet(sheetEntries, organizeAfter=True)
 
 
 async def reconcileRecruitmentOrientationBonusesForSession(
