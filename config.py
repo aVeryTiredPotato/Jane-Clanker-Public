@@ -242,6 +242,15 @@ trainingMirrorWebhookName = "Jane Training Log"
 johnEventLogChannelId = 0
 johnClankerBotId = 0
 
+honorGuardEnabled = False
+honorGuardReviewChannelId = 0
+honorGuardLogChannelId = 0
+honorGuardArchiveChannelId = 0
+honorGuardSpreadsheetId = 0
+honorGuardMemberSheetName = ""
+honorGuardScheduleSheetName = ""
+honorGuardArchiveSheetName = ""
+
 
 # == Public Utility / Suggestions ==
 welcomeChannelId = 0
