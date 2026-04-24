@@ -1,3 +1,4 @@
+#  Credit to MintFlavour(@koni_mint)
 from __future__ import annotations
 import json
 from db.sqlite import execute, executeReturnId, fetchAll, fetchOne
