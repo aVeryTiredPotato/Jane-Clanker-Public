@@ -352,6 +352,51 @@ async def initDb():
         );
         """)
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_submission_events (
+            eventId INTEGER, -- we can store here mesageId
+            name TEXT NOT NULL,
+            type TEXT NOT NULL, -- TRAINING/EXAM_JGE/EXAM_NCO/GAMENIGHT/SENTRY_DUTY/INSPECTION
+            time TEXT NOT NULL,
+            hostId INTEGER NOT NULL,
+            cohostId INTEGER,
+            cohost2Id INTEGER,
+            supervisorId INTEGER,
+            duration INTEGER NOT NULL
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_point_awards (
+            userId INTEGER NOT NULL,
+            officerId INTEGER NOT NULL,
+            points INTEGER NOT NULL DEFAULT 0,
+         -- date TEXT NOT NULL DEFAULT (datetime('now')),
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_attendence_records (
+            eventId INTEGER NOT NULL,
+            userId INTEGER NOT NULL,
+            joinTime TEXT NOT NULL DEFAULT (datetime('now')),
+            leaveTime TEXT,
+            PRIMARY KEY (eventId, userId)
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_sentry_logs (
+            userId INTEGER NOT NULL,
+            sentryType INTEGER NOT NULL, --SOLO/ORIENTATION
+            startTime TEXT NOT NULL,
+            endTIme TEXT NOT NULL,
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_quota_cycles (
+            cycleId INTEGER AUTOINCREMENT,
+            startDate TEXT NOT NULL,
+            endDate TEXT NOT NULL,
+        );
+        """)
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS bg_flag_rules (
             ruleId INTEGER PRIMARY KEY AUTOINCREMENT,
             ruleType TEXT NOT NULL,
@@ -994,6 +1039,11 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_recruitment_time_patrol_type ON recruitment_time_submissions(patrolType, status)",
             "CREATE INDEX IF NOT EXISTS idx_recruitment_patrol_status ON recruitment_patrol_sessions(status)",
             "CREATE INDEX IF NOT EXISTS idx_recruitment_patrol_attendees_patrol ON recruitment_patrol_attendees(patrolId, joinTime)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_subimission_events ON hg_submission_events(eventId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_point_awards ON hg_point_awards(userId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_attendence_records ON hg_attendence_records(eventId, userId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_sentry_logs ON hg_sentry_logs(userId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_quota_cycles ON hg_quota_cycles(cycleId)",
             "CREATE INDEX IF NOT EXISTS idx_orbat_requests_status ON orbat_requests(status)",
             "CREATE INDEX IF NOT EXISTS idx_loa_requests_status ON loa_requests(status)",
             "CREATE INDEX IF NOT EXISTS idx_division_apps_status ON division_applications(status)",
