@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 
 
+from db.sqlite import execute, executeReturnId, fetchOne, fetchAll, executeMany
+
 @dataclass(slots=True, frozen=True)
 class HonorGuardConfig:
     enabled: bool
@@ -68,4 +70,63 @@ def buildScaffoldStatus(*, configModule: Any) -> HonorGuardScaffoldStatus:
             "Add event clock-in flow and point calculation logic.",
             "Wire approved records into the Honor Guard sheet adapter.",
         ),
+    )
+
+async def createPointAwardSubmission(
+    guildId: int,
+    channelId: int,
+    submitterId: int,
+    awardedUserId: int,
+    reason: str,
+    eventPoints: int,
+    quotaPoints: int = 0,
+) -> int:
+    return await executeReturnId(
+        """
+        INSERT INTO hg_point_awards
+            (guildId, channelId, messageId, submitterId, awardedUserId, reason, eventPoints, quotaPoints, status)
+        VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'PENDING')
+        """,
+        (
+            guildId,
+            channelId,
+            submitterId,
+            awardedUserId,
+            reason,
+            eventPoints,
+            quotaPoints,
+        ),
+    )
+
+
+async def getPointAwardSubmission(submissionId: int) -> dict | None:
+    return await fetchOne(
+        """
+        SELECT * FROM hg_point_awards WHERE id = ?
+        """,
+        (submissionId,),
+    )
+
+async def setPointAwardMessageId(submissionId: int, messageId: int) -> None:
+    await execute(
+        """
+        UPDATE hg_point_awards SET messageId = ? WHERE id = ?
+        """,
+        (messageId, submissionId),
+    )
+
+async def updatePointAwardStatus(
+    submissionId: int,
+    status: str,
+    reviewerId: int,
+    note: str | None = None,
+    threadId: int | None = None,
+) -> None:
+    await execute(
+        """
+        UPDATE hg_point_awards
+        SET status = ?, reviewerId = ?, reviewNote = ?, reviewThreadId = ?
+        WHERE id = ?
+        """,
+        (status, reviewerId, note, threadId, submissionId),
     )

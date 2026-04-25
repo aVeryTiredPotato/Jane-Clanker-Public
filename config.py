@@ -148,6 +148,10 @@ recruitmentReviewerPingRoleId = 0
 anrorsMemberRoleId = 0  # ANRO Recruitment Services
 anrorsRmPlusRoleId = 0  # ANRORS RM+
 
+# Honor Guard roles.
+honorGuardReviewerRoleId = 0
+honorGuardReviewerPingRoleId = 0
+
 # ANRD role placeholders (for future role -> ORBAT rank sync).
 anrdRoleProbationaryId = 0
 anrdRoleContributorId = 0
@@ -243,6 +247,7 @@ johnEventLogChannelId = 0
 johnClankerBotId = 0
 
 honorGuardEnabled = False
+honorGuardCommandGuildIds = []
 honorGuardReviewChannelId = 0
 honorGuardLogChannelId = 0
 honorGuardArchiveChannelId = 0
