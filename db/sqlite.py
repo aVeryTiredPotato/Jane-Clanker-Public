@@ -352,41 +352,78 @@ async def initDb():
         );
         """)
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS hg_submission_events (
-            eventId INTEGER, -- we can store here mesageId
+        CREATE TABLE IF NOT EXISTS hg_main(
+            userId INTEGER NOT NULL,
+         -- name TEXT NOT NULL,
+            rank TEXT NOT NULL,
+         -- primaryOffice TEXT NOT NULL DEFAULT 'NONE',
+            quotaPoints INTEGER NOT NULL DEFAULT 0,
+         -- quotaRequirement INTEGER NOT NULL DEFAULT 0,
+         -- quotaComplete TEXT NOT NULL DEFAULT 'FALSE',
+            activityStatus TEXT NOT NULL DEFAULT 'N/A', -- ACTIVE / INACTIVE / N/A
+            excuseStatus TEXT NOT NULL DEFAULT 'NONE', -- NONE / LOA / ANROMR+ / RETIRED
+         -- excuseEnd TEXT,
+            eventPoints INTEGER NOT NULL DEFAULT 0,
+            awardedPoints INTEGER NOT NULL DEFAULT 0,
+            allTimePoints INTEGER NOT NULL DEFAULT 0,
+            passedJGE TEXT NOT NULL DEFAULT 'FALSE',
+            passedNCO TEXT NOT NULL DEFAULT 'FALSE',
+         -- promotionEligible TEXT NOT NULL DEFAULT 'FALSE',
+         -- strikes INTEGER NOT NULL DEFAULT 0,
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_events (
+            eventId INTEGER AUTOINCREMENT,
+            messageId INTEGER NOT NULL,
             name TEXT NOT NULL,
-            type TEXT NOT NULL, -- TRAINING/EXAM_JGE/EXAM_NCO/GAMENIGHT/SENTRY_DUTY/INSPECTION
+            type TEXT NOT NULL, -- TRAINING / EXAM_JGE / EXAM_NCO / GAMENIGHT / SENTRY_DUTY / INSPECTION / ORIENTATION
             time TEXT NOT NULL,
             hostId INTEGER NOT NULL,
-            cohostId INTEGER,
-            cohost2Id INTEGER,
-            supervisorId INTEGER,
-            duration INTEGER NOT NULL
+            cohostsString TEXT,
+            supervisorsString TEXT,
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_events_archive (
+            eventId INTEGER NOT NULL,
+            messageId INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL, -- TRAINING / EXAM_JGE / EXAM_NCO / GAMENIGHT / SENTRY_DUTY / INSPECTION / ORIENTATION
+            time TEXT NOT NULL,
+            hostId INTEGER NOT NULL,
+            cohostsString TEXT,
+            supervisorsString TEXT,
+            durationMinutes INTEGER NOT NULL,
         );
         """)
         await db.execute("""
         CREATE TABLE IF NOT EXISTS hg_point_awards (
-            userId INTEGER NOT NULL,
-            officerId INTEGER NOT NULL,
+            awardedId INTEGER NOT NULL, -- guardman that the points are awarded to
+         -- submitterId INTEGER NOT NULL, -- officer/guardsman/person that recommended the award
+            approverId INTEGER NOT NULL, -- officer who approved the award
             points INTEGER NOT NULL DEFAULT 0,
          -- date TEXT NOT NULL DEFAULT (datetime('now')),
         );
         """)
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS hg_attendence_records (
+        CREATE TABLE IF NOT EXISTS hg_attendance_records (
             eventId INTEGER NOT NULL,
             userId INTEGER NOT NULL,
             joinTime TEXT NOT NULL DEFAULT (datetime('now')),
             leaveTime TEXT,
-            PRIMARY KEY (eventId, userId)
+            eventPoints INTEGER NOT NULL DEFAULT 0, -- calculated in service calculator here for logging only
+            PRIMARY KEY (eventId, userId),
         );
         """)
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS hg_sentry_logs (
+        CREATE TABLE IF NOT EXISTS hg_solo_sentry_logs (
             userId INTEGER NOT NULL,
-            sentryType INTEGER NOT NULL, --SOLO/ORIENTATION
             startTime TEXT NOT NULL,
-            endTIme TEXT NOT NULL,
+            endTime TEXT NOT NULL,
+            evidenceAttachmentUrl1 TEXT,
+            evidenceAttachmentUrl2 TEXT,
+            status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING/APPROVED/REJECTED
         );
         """)
         await db.execute("""
@@ -1039,10 +1076,11 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_recruitment_time_patrol_type ON recruitment_time_submissions(patrolType, status)",
             "CREATE INDEX IF NOT EXISTS idx_recruitment_patrol_status ON recruitment_patrol_sessions(status)",
             "CREATE INDEX IF NOT EXISTS idx_recruitment_patrol_attendees_patrol ON recruitment_patrol_attendees(patrolId, joinTime)",
-            "CREATE INDEX IF NOT EXISTS idx_hg_subimission_events ON hg_submission_events(eventId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_main ON hg_main(userId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_events ON hg_events(eventId)",
             "CREATE INDEX IF NOT EXISTS idx_hg_point_awards ON hg_point_awards(userId)",
-            "CREATE INDEX IF NOT EXISTS idx_hg_attendence_records ON hg_attendence_records(eventId, userId)",
-            "CREATE INDEX IF NOT EXISTS idx_hg_sentry_logs ON hg_sentry_logs(userId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_attendance_records ON hg_attendance_records(eventId, userId)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_solo_sentry_logs ON hg_solo_sentry_logs(userId)",
             "CREATE INDEX IF NOT EXISTS idx_hg_quota_cycles ON hg_quota_cycles(cycleId)",
             "CREATE INDEX IF NOT EXISTS idx_orbat_requests_status ON orbat_requests(status)",
             "CREATE INDEX IF NOT EXISTS idx_loa_requests_status ON loa_requests(status)",
