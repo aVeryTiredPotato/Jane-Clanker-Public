@@ -387,7 +387,6 @@ async def initDb():
         await db.execute("""
         CREATE TABLE IF NOT EXISTS hg_events_archive (
             eventId INTEGER NOT NULL,
-            messageId INTEGER NOT NULL,
             name TEXT NOT NULL,
             type TEXT NOT NULL, -- TRAINING / EXAM_JGE / EXAM_NCO / GAMENIGHT / SENTRY_DUTY / INSPECTION / ORIENTATION
             time TEXT NOT NULL,
