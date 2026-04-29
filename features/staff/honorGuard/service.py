@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from db.sqlite import execute, executeReturnId
 
 
 @dataclass(slots=True, frozen=True)
@@ -69,3 +70,40 @@ def buildScaffoldStatus(*, configModule: Any) -> HonorGuardScaffoldStatus:
             "Wire approved records into the Honor Guard sheet adapter.",
         ),
     )
+
+def submitPoints(awardedId: int, submitterId: int, approverId: int, points: int):
+    await execute("""
+        INSERT INTO hg_point_awards(awardedId, submitterId, approverId, points, timestamp, status)
+        VALUES (?, ?, ?, ?, datetime('now'), 'PENDING')
+        """,
+        (awardedId, submitterId, approverId, points)
+    )
+
+def approvePoints(timestamp: str, approverId: int):
+    await execute("""
+        UPDATE hg_point_awards
+        SET status = 'APPROVED',
+            approverId = ?
+        WHERE timestamp = ?
+    """, 
+    (approverId, timestamp)
+    )
+
+def rejectPoints(timestamp: str, approverId: int):
+    await execute("""
+        UPDATE hg_point_awards
+        SET status = 'REJECTED',
+            approverId = ?
+        WHERE timestamp = ?
+    """,
+    (approverId, timestamp)
+    )
+
+def createEvent(messageId: int, name: str, type: str, time: str, hostId: int, cohostsString: int, supervisorsString: int):
+    eventId = await executeReturnId("""
+        INSERT INTO hg_event(messageId, name, type, time, hostId, cohostsString, supervisorsString)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """,
+    (messageId, name, type, time, hostId, cohostsString, supervisorsString)
+    )
+    return eventId
