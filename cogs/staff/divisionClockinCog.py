@@ -118,16 +118,10 @@ class DivisionClockinCog(commands.Cog):
 
         channel = self.bot.get_channel(channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channelId)
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, channelId)
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return None
-        try:
-            return await channel.fetch_message(messageId)
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            return None
+        return await interactionRuntime.safeFetchMessage(channel, messageId)
 
     async def _refreshSessionMessage(self, sessionId: int) -> None:
         session = await sessionService.getSession(int(sessionId))
@@ -143,13 +137,11 @@ class DivisionClockinCog(commands.Cog):
             for child in view.children:
                 if isinstance(child, discord.ui.Button):
                     child.disabled = True
-        try:
-            await message.edit(
-                embed=self._buildEmbed(session, attendees, subdepartment=subdepartment),
-                view=view,
-            )
-        except (discord.Forbidden, discord.HTTPException):
-            return
+        await interactionRuntime.safeMessageEdit(
+            message,
+            embed=self._buildEmbed(session, attendees, subdepartment=subdepartment),
+            view=view,
+        )
 
     async def cog_load(self) -> None:
         try:
@@ -246,12 +238,12 @@ class DivisionClockinCog(commands.Cog):
 
         attendees = await sessionService.getAttendees(int(sessionId))
         view = DivisionClockinView(self, int(sessionId))
-        try:
-            message = await channel.send(
-                embed=self._buildEmbed(session, attendees, subdepartment=normalizedSubdepartment),
-                view=view,
-            )
-        except (discord.Forbidden, discord.HTTPException):
+        message = await interactionRuntime.safeChannelSend(
+            channel,
+            embed=self._buildEmbed(session, attendees, subdepartment=normalizedSubdepartment),
+            view=view,
+        )
+        if message is None:
             await sessionService.setStatus(int(sessionId), "CANCELED")
             return await self._safeEphemeral(interaction, "I could not post the division clock-in message.")
 

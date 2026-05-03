@@ -306,14 +306,14 @@ async def handleApply(
             int(application.get("applicantId") or 0),
         )
         mentionText = cog.reviewMentions(division)
-        try:
-            reviewMessage = await reviewChannel.send(
-                content=mentionText or None,
-                embed=reviewEmbed,
-                view=reviewView,
-                allowed_mentions=discord.AllowedMentions(roles=True),
-            )
-        except (discord.Forbidden, discord.HTTPException):
+        reviewMessage = await interactionRuntime.safeChannelSend(
+            reviewChannel,
+            content=mentionText or None,
+            embed=reviewEmbed,
+            view=reviewView,
+            allowed_mentions=discord.AllowedMentions(roles=True),
+        )
+        if reviewMessage is None:
             await applicationsService.setApplicationStatus(
                 int(application["applicationId"]),
                 "DENIED",
@@ -455,14 +455,14 @@ async def handleModalSubmit(
         int(application.get("applicantId") or 0),
     )
     mentionText = cog.reviewMentions(division)
-    try:
-        reviewMessage = await reviewChannel.send(
-            content=mentionText or None,
-            embed=reviewEmbed,
-            view=reviewView,
-            allowed_mentions=discord.AllowedMentions(roles=True),
-        )
-    except (discord.Forbidden, discord.HTTPException):
+    reviewMessage = await interactionRuntime.safeChannelSend(
+        reviewChannel,
+        content=mentionText or None,
+        embed=reviewEmbed,
+        view=reviewView,
+        allowed_mentions=discord.AllowedMentions(roles=True),
+    )
+    if reviewMessage is None:
         await applicationsService.setApplicationStatus(
             int(application["applicationId"]),
             "DENIED",

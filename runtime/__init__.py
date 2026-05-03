@@ -3,6 +3,7 @@ from . import eventIngest
 from . import gamblingApi
 from . import interaction
 from . import taskBudgeter
+from . import taskStats
 from . import timezones
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "gamblingApi",
     "interaction",
     "taskBudgeter",
+    "taskStats",
     "timezones",
 ]

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 from typing import Awaitable, Callable, Optional
@@ -9,8 +9,9 @@ import config
 from features.staff.recruitment import outputs as recruitmentOutputs
 from features.staff.recruitment import rendering as recruitmentRendering
 from features.staff.recruitment import service as recruitmentService
+from runtime import interaction as interactionRuntime
 from runtime import orgProfiles
-from features.staff.sessions import roblox
+from features.staff.sessions.Roblox import robloxGroups, robloxUsers
 from features.staff.sessions import service as sessionService
 
 log = logging.getLogger(__name__)
@@ -21,26 +22,48 @@ NotifyModsFn = Callable[[discord.Client, str], Awaitable[None]]
 GroupUrlProviderFn = Callable[[], str]
 
 
+def _fallbackRobloxGroupUrl(groupId: int) -> str:
+    normalizedGroupId = int(groupId or 0)
+    if normalizedGroupId > 0:
+        return f"https://www.roblox.com/groups/{normalizedGroupId}"
+    return "https://www.roblox.com/communities/"
+
+
 async def updateRecruitmentSubmissionMessage(
     bot: discord.Client,
     submission: dict,
     *,
     getChannel: GetChannelFn,
 ) -> None:
-    channelId = submission.get("channelId") or getattr(config, "recruitmentChannelId", None)
     messageId = submission.get("messageId")
-    if not channelId or not messageId:
+    if not messageId:
         return
-    try:
-        channel = await getChannel(bot, int(channelId))
-        if channel is None:
-            return
-        msg = await channel.fetch_message(messageId)
-    except (discord.NotFound, discord.Forbidden):
+
+    candidateChannelIds: list[int] = []
+    for rawChannelId in (
+        submission.get("channelId"),
+        getattr(config, "recruitmentChannelId", None),
+    ):
+        try:
+            channelId = int(rawChannelId or 0)
+        except (TypeError, ValueError):
+            channelId = 0
+        if channelId > 0 and channelId not in candidateChannelIds:
+            candidateChannelIds.append(channelId)
+
+    if not candidateChannelIds:
         return
 
     embed = recruitmentRendering.buildRecruitmentEmbed(submission)
-    await msg.edit(embed=embed)
+    for channelId in candidateChannelIds:
+        channel = await getChannel(bot, channelId)
+        if channel is None:
+            continue
+        msg = await interactionRuntime.safeFetchMessage(channel, messageId)
+        if msg is None:
+            continue
+        await interactionRuntime.safeMessageEdit(msg, embed=embed)
+        return
 
 
 async def dmRecruiterBonus(
@@ -100,7 +123,11 @@ async def applyRecruitmentOrientationBonus(
                 dmUser=dmUser,
             )
     if sheetEntries:
-        await recruitmentOutputs.syncApprovedLogEntriesToSheet(sheetEntries, organizeAfter=True)
+        await recruitmentOutputs.syncApprovedLogEntriesToSheet(
+            sheetEntries,
+            organizeAfter=True,
+            botClient=bot,
+        )
 
 
 async def reconcileRecruitmentOrientationBonusesForSession(
@@ -139,6 +166,36 @@ async def attemptRobloxAutoAccept(
     notifyMods: NotifyModsFn,
     groupUrlProvider: GroupUrlProviderFn,
 ) -> str:
+    groupId = orgProfiles.getOrganizationValue(
+        config,
+        "robloxGroupId",
+        guildId=int(getattr(guild, "id", 0) or 0),
+        default=0,
+    )
+    groupUrl = str(groupUrlProvider() or "").strip()
+    return await attemptRobloxAutoAcceptForGroup(
+        bot,
+        guild,
+        sessionId,
+        targetUserId,
+        groupId=int(groupId or 0),
+        groupUrl=groupUrl,
+        dmUser=dmUser,
+        notifyMods=notifyMods,
+    )
+
+
+async def attemptRobloxAutoAcceptForGroup(
+    bot: discord.Client,
+    guild: Optional[discord.Guild],
+    sessionId: int,
+    targetUserId: int,
+    *,
+    groupId: int,
+    groupUrl: str = "",
+    dmUser: DmUserFn,
+    notifyMods: NotifyModsFn,
+) -> str:
     attendee = await sessionService.getAttendee(sessionId, targetUserId)
     if not attendee:
         return "NO_ATTENDEE"
@@ -147,13 +204,9 @@ async def attemptRobloxAutoAccept(
     if attendee.get("robloxJoinStatus") == "ACCEPTED":
         return "ACCEPTED"
 
-    groupId = orgProfiles.getOrganizationValue(
-        config,
-        "robloxGroupId",
-        guildId=int(getattr(guild, "id", 0) or 0),
-        default=0,
-    )
-    if not groupId or not getattr(config, "robloxOpenCloudApiKey", ""):
+    normalizedGroupId = int(groupId or 0)
+    normalizedGroupUrl = str(groupUrl or "").strip() or _fallbackRobloxGroupUrl(normalizedGroupId)
+    if not normalizedGroupId or not getattr(config, "robloxOpenCloudApiKey", ""):
         await sessionService.setRobloxStatus(
             sessionId,
             targetUserId,
@@ -163,22 +216,21 @@ async def attemptRobloxAutoAccept(
         )
         await notifyMods(
             bot,
-            f"Roblox auto-accept skipped for <@{targetUserId}>: missing Open Cloud config.",
+            f"Roblox auto-accept skipped for <@{targetUserId}>: missing Open Cloud config for group `{normalizedGroupId}`.",
         )
         return "MISSING_CONFIG"
 
     await sessionService.setRobloxStatus(sessionId, targetUserId, attendee.get("robloxUserId"), "PENDING")
-    lookup = await roblox.fetchRobloxUser(targetUserId, guildId=guild.id if guild else None)
+    lookup = await robloxUsers.fetchRobloxUser(targetUserId, guildId=guild.id if guild else None)
     if not lookup.robloxId:
         status = "NO_ROVER" if lookup.error == "No Roblox account linked via RoVer." else "ERROR"
         await sessionService.setRobloxStatus(sessionId, targetUserId, None, status, lookup.error)
 
         verifyUrl = getattr(config, "roverVerifyUrl", "https://rover.link/verify")
-        groupUrl = groupUrlProvider()
         dmMessage = (
             "We couldn't find your Roblox account via RoVer. "
             f"Please verify your Discord here: {verifyUrl} "
-            f"then request to join the group: {groupUrl}"
+            f"then request to join the group: {normalizedGroupUrl}"
         )
         dmOk = await dmUser(bot, targetUserId, dmMessage)
         modNote = (
@@ -189,18 +241,18 @@ async def attemptRobloxAutoAccept(
         return status
 
     # If the user is already in the target group, mark as accepted and stop.
-    groups = await roblox.fetchRobloxGroups(lookup.robloxId)
+    groups = await robloxGroups.fetchRobloxGroups(lookup.robloxId)
     if groups.status == 200:
         for entry in groups.groups:
             try:
                 entryGroupId = int(entry.get("id")) if entry.get("id") is not None else None
             except (TypeError, ValueError):
                 entryGroupId = None
-            if entryGroupId == int(groupId):
+            if entryGroupId == normalizedGroupId:
                 await sessionService.setRobloxStatus(sessionId, targetUserId, lookup.robloxId, "ACCEPTED")
                 return "ACCEPTED"
 
-    accept = await roblox.acceptJoinRequest(lookup.robloxId)
+    accept = await robloxGroups.acceptJoinRequestForGroup(lookup.robloxId, normalizedGroupId)
     if accept.ok:
         await sessionService.setRobloxStatus(sessionId, targetUserId, lookup.robloxId, "ACCEPTED")
         return "ACCEPTED"
@@ -218,11 +270,10 @@ async def attemptRobloxAutoAccept(
 
     await sessionService.setRobloxStatus(sessionId, targetUserId, lookup.robloxId, status, accept.error)
 
-    groupUrl = groupUrlProvider()
     if status == "NO_REQUEST":
         dmMessage = (
             "We found your Roblox account, but there was no pending join request for the group. "
-            f"Please request to join here: {groupUrl}"
+            f"Please request to join here: {normalizedGroupUrl}"
         )
     else:
         dmMessage = (
@@ -235,7 +286,7 @@ async def attemptRobloxAutoAccept(
         await notifyMods(
             bot,
             f"Roblox auto-accept skipped for <@{targetUserId}>: "
-            f"no pending ANRO join request found. "
+            f"no pending Roblox join request found for group `{normalizedGroupId}`. "
             f"{'DM sent to ask them to request to join.' if dmOk else 'DM failed.'}",
         )
     else:
@@ -261,14 +312,13 @@ async def deleteSessionMessage(
         channel = await getChannel(bot, int(session["channelId"]))
         if channel is None:
             return
-        msg = await channel.fetch_message(session["messageId"])
+        msg = await interactionRuntime.safeFetchMessage(channel, session["messageId"])
+        if msg is None:
+            return
     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
         return
 
-    try:
-        await msg.delete()
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-        return
+    await interactionRuntime.safeMessageDelete(msg)
 
 
 async def postOrientationResults(
@@ -312,12 +362,10 @@ async def postOrientationResults(
     if channel is None:
         return
 
-    try:
-        await channel.send(
-            content,
-            allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
-        )
-    except (discord.Forbidden, discord.HTTPException):
-        return
+    await interactionRuntime.safeChannelSend(
+        channel,
+        content=content,
+        allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+    )
 
 

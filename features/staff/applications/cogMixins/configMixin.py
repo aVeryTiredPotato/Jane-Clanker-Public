@@ -46,7 +46,6 @@ from features.staff.recruitment import sheets as recruitmentSheets
 from runtime import interaction as interactionRuntime
 from runtime import orbatAudit as orbatAuditRuntime
 from runtime import taskBudgeter
-from features.staff.sessions import roblox
 
 from features.staff.applications.cogShared import _isFinal, _normalizeAppKey, _parseDays, _toIntList, _toPositiveInt
 
@@ -361,10 +360,7 @@ class ApplicationsConfigMixin:
             return interaction.channel if isinstance(interaction.channel, (discord.TextChannel, discord.Thread)) else None
         channel = interaction.guild.get_channel(channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channelId)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, channelId)
         channelGuild = getattr(channel, "guild", None)
         if channelGuild is not None and int(getattr(channelGuild, "id", 0) or 0) != int(interaction.guild.id):
             return None
@@ -381,10 +377,7 @@ class ApplicationsConfigMixin:
             return None
         channel = guild.get_channel(channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channelId)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, channelId)
         channelGuild = getattr(channel, "guild", None)
         if channelGuild is not None and int(getattr(channelGuild, "id", 0) or 0) != int(guild.id):
             return None
@@ -396,10 +389,7 @@ class ApplicationsConfigMixin:
             return None
         channel = guild.get_channel(channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channelId)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, channelId)
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             return channel
         return None
@@ -568,40 +558,33 @@ class ApplicationsConfigMixin:
         if hubMessageId > 0:
             thread = guild.get_channel(hubMessageId)
             if thread is None:
-                try:
-                    thread = await self.bot.fetch_channel(hubMessageId)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    thread = None
+                thread = await interactionRuntime.safeFetchChannel(self.bot, hubMessageId)
             if isinstance(thread, discord.Thread):
                 return thread
 
         channel = guild.get_channel(channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channelId)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, channelId)
 
         # If the thread is missing, try to re-create it from the stored hub message.
         if isinstance(channel, discord.TextChannel) and hubMessageId > 0:
-            try:
-                hubMessage = await channel.fetch_message(hubMessageId)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                hubMessage = None
+            hubMessage = await interactionRuntime.safeFetchMessage(channel, hubMessageId)
             if hubMessage is not None:
                 try:
                     threadName = f"{divisionKey} applications"
-                    thread = await hubMessage.create_thread(
-                        name=threadName[:100],
-                        auto_archive_duration=10080,
+                    thread = await taskBudgeter.runDiscord(
+                        lambda: hubMessage.create_thread(
+                            name=threadName[:100],
+                            auto_archive_duration=10080,
+                        )
                     )
                 except (discord.Forbidden, discord.HTTPException):
                     thread = None
                 if isinstance(thread, discord.Thread):
-                    try:
-                        await thread.send("Applications thread created automatically for this division hub.")
-                    except (discord.Forbidden, discord.HTTPException):
-                        pass
+                    await interactionRuntime.safeChannelSend(
+                        thread,
+                        content="Applications thread created automatically for this division hub.",
+                    )
                     return thread
 
         if isinstance(channel, (discord.TextChannel, discord.Thread)):

@@ -1,5 +1,3 @@
-# Reaction roles by idkpine
-
 import aiosqlite
 import asyncio
 import logging
@@ -11,7 +9,7 @@ _dbConn: Optional[aiosqlite.Connection] = None
 _dbConnInitLock = asyncio.Lock()
 _dbWriteLock = asyncio.Lock()
 log = logging.getLogger(__name__)
-_schemaVersionTarget = 14
+_schemaVersionTarget = 22
 _T = TypeVar("_T")
 
 
@@ -128,6 +126,87 @@ async def initDb():
             createdAt TEXT NOT NULL DEFAULT (datetime('now'))
         );
         """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_intelligence_report_index (
+            reportId INTEGER PRIMARY KEY,
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL DEFAULT 0,
+            reviewerId INTEGER NOT NULL,
+            targetUserId INTEGER NOT NULL,
+            robloxUserId INTEGER,
+            robloxUsername TEXT,
+            reviewBucket TEXT NOT NULL DEFAULT '',
+            score INTEGER NOT NULL,
+            band TEXT NOT NULL,
+            confidence INTEGER NOT NULL,
+            scored INTEGER NOT NULL DEFAULT 1,
+            outcome TEXT NOT NULL DEFAULT 'scored',
+            hardMinimum INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_identity_history (
+            historyId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL DEFAULT 0,
+            reportId INTEGER,
+            discordUserId INTEGER NOT NULL DEFAULT 0,
+            robloxUserId INTEGER,
+            robloxUsername TEXT NOT NULL DEFAULT '',
+            robloxUsernameKey TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT '',
+            confidence INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_roblox_username_index (
+            robloxUserId INTEGER NOT NULL,
+            robloxUsernameKey TEXT NOT NULL,
+            robloxUsername TEXT NOT NULL DEFAULT '',
+            usernameKind TEXT NOT NULL DEFAULT 'current',
+            source TEXT NOT NULL DEFAULT '',
+            reportId INTEGER,
+            firstSeenAt TEXT NOT NULL DEFAULT (datetime('now')),
+            lastSeenAt TEXT NOT NULL DEFAULT (datetime('now')),
+            seenCount INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (robloxUserId, robloxUsernameKey)
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_roblox_group_index (
+            robloxUserId INTEGER NOT NULL,
+            groupId INTEGER NOT NULL,
+            robloxUsername TEXT NOT NULL DEFAULT '',
+            groupName TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT '',
+            rank INTEGER NOT NULL DEFAULT 0,
+            memberCount INTEGER,
+            source TEXT NOT NULL DEFAULT '',
+            reportId INTEGER,
+            firstSeenAt TEXT NOT NULL DEFAULT (datetime('now')),
+            lastSeenAt TEXT NOT NULL DEFAULT (datetime('now')),
+            seenCount INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (robloxUserId, groupId)
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_alt_links (
+            linkId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'CONFIRMED',
+            sourceDiscordUserId INTEGER NOT NULL DEFAULT 0,
+            sourceRobloxUserId INTEGER,
+            sourceRobloxUsername TEXT NOT NULL DEFAULT '',
+            targetDiscordUserId INTEGER NOT NULL DEFAULT 0,
+            targetRobloxUserId INTEGER,
+            targetRobloxUsername TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            createdBy INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
         for statement in (
             "ALTER TABLE bg_intelligence_reports ADD COLUMN scored INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE bg_intelligence_reports ADD COLUMN outcome TEXT NOT NULL DEFAULT 'scored'",
@@ -183,6 +262,57 @@ async def initDb():
         CREATE TABLE IF NOT EXISTS bot_settings (
             key TEXT PRIMARY KEY,
             value TEXT
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS roblox_identity_links (
+            discordUserId INTEGER PRIMARY KEY,
+            robloxUserId INTEGER,
+            robloxUsername TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT '',
+            guildId INTEGER NOT NULL DEFAULT 0,
+            confidence INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            lastUsedAt TEXT
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS orbat_member_mirror (
+            sheetKey TEXT NOT NULL,
+            spreadsheetId TEXT NOT NULL,
+            sheetName TEXT NOT NULL,
+            rowNumber INTEGER NOT NULL,
+            rowFingerprint TEXT NOT NULL DEFAULT '',
+            discordUserId INTEGER NOT NULL DEFAULT 0,
+            robloxUserId INTEGER,
+            robloxUsername TEXT NOT NULL DEFAULT '',
+            robloxUsernameKey TEXT NOT NULL DEFAULT '',
+            rank TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            department TEXT NOT NULL DEFAULT '',
+            sectionLabel TEXT NOT NULL DEFAULT '',
+            pointsJson TEXT NOT NULL DEFAULT '{}',
+            identityJson TEXT NOT NULL DEFAULT '{}',
+            rowJson TEXT NOT NULL DEFAULT '{}',
+            rawRowJson TEXT NOT NULL DEFAULT '[]',
+            active INTEGER NOT NULL DEFAULT 1,
+            firstSeenAt TEXT NOT NULL DEFAULT (datetime('now')),
+            lastSyncedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (sheetKey, rowNumber)
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS orbat_mirror_sync_state (
+            sheetKey TEXT PRIMARY KEY,
+            displayName TEXT NOT NULL DEFAULT '',
+            spreadsheetId TEXT NOT NULL DEFAULT '',
+            sheetName TEXT NOT NULL DEFAULT '',
+            lastSyncedAt TEXT,
+            rowCount INTEGER NOT NULL DEFAULT 0,
+            memberRowCount INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            metadataJson TEXT NOT NULL DEFAULT '{}'
         );
         """)
         await db.execute("""
@@ -365,6 +495,90 @@ async def initDb():
         );
         """)
         await _executeOptional("ALTER TABLE bg_flag_rules ADD COLUMN severity INTEGER NOT NULL DEFAULT 0")
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_item_visual_refs (
+            assetId INTEGER PRIMARY KEY,
+            sourceRuleId INTEGER,
+            sourceRuleCount INTEGER NOT NULL DEFAULT 1,
+            note TEXT,
+            thumbnailHash TEXT,
+            hashSize INTEGER NOT NULL DEFAULT 0,
+            thumbnailUrl TEXT,
+            thumbnailState TEXT NOT NULL DEFAULT '',
+            validationState TEXT NOT NULL DEFAULT 'PENDING',
+            validationError TEXT,
+            lastValidatedAt TEXT,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_item_review_queue (
+            queueId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL DEFAULT 0,
+            sessionId INTEGER,
+            assetId INTEGER NOT NULL,
+            assetName TEXT,
+            itemType TEXT,
+            creatorId INTEGER,
+            creatorName TEXT,
+            priceRobux INTEGER,
+            thumbnailHash TEXT NOT NULL DEFAULT '',
+            thumbnailUrl TEXT,
+            thumbnailState TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            seenCount INTEGER NOT NULL DEFAULT 1,
+            firstSeenAt TEXT NOT NULL DEFAULT (datetime('now')),
+            lastSeenAt TEXT NOT NULL DEFAULT (datetime('now')),
+            sourceUserId INTEGER NOT NULL DEFAULT 0,
+            sourceRobloxUserId INTEGER,
+            sourceRobloxUsername TEXT,
+            lastQueuedByReviewerId INTEGER NOT NULL DEFAULT 0,
+            reviewChannelId INTEGER,
+            reviewMessageId INTEGER,
+            reviewNote TEXT,
+            reviewedBy INTEGER,
+            reviewedAt TEXT,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_item_review_sources (
+            sourceId INTEGER PRIMARY KEY AUTOINCREMENT,
+            queueId INTEGER NOT NULL,
+            guildId INTEGER NOT NULL DEFAULT 0,
+            sessionId INTEGER,
+            sourceUserId INTEGER NOT NULL DEFAULT 0,
+            sourceRobloxUserId INTEGER,
+            sourceRobloxUsername TEXT,
+            queuedByReviewerId INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_item_review_actions (
+            actionId INTEGER PRIMARY KEY AUTOINCREMENT,
+            queueId INTEGER NOT NULL,
+            actorId INTEGER NOT NULL DEFAULT 0,
+            action TEXT NOT NULL,
+            note TEXT,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bg_item_review_sheet_sync (
+            spreadsheetId TEXT NOT NULL,
+            sheetName TEXT NOT NULL DEFAULT '',
+            rowNumber INTEGER NOT NULL,
+            discordUserId INTEGER NOT NULL DEFAULT 0,
+            entryStatus TEXT NOT NULL DEFAULT '',
+            fingerprint TEXT NOT NULL DEFAULT '',
+            processedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            lastQueuedAt TEXT,
+            PRIMARY KEY (spreadsheetId, sheetName, rowNumber)
+        );
+        """)
         await db.execute("""
         CREATE TABLE IF NOT EXISTS orbat_requests (
             requestId INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -915,6 +1129,142 @@ async def initDb():
         );
         """)
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_submissions (
+            submissionId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL,
+            messageId INTEGER NOT NULL DEFAULT 0,
+            submitterId INTEGER NOT NULL,
+            targetUserId INTEGER NOT NULL DEFAULT 0,
+            targetRobloxUsername TEXT NOT NULL DEFAULT '',
+            targetDisplayName TEXT NOT NULL DEFAULT '',
+            submissionType TEXT NOT NULL,
+            eventType TEXT NOT NULL DEFAULT '',
+            eventTitle TEXT NOT NULL DEFAULT '',
+            eventDate TEXT NOT NULL DEFAULT '',
+            quotaPoints REAL NOT NULL DEFAULT 0,
+            promotionEventPoints REAL NOT NULL DEFAULT 0,
+            promotionAwardedPoints REAL NOT NULL DEFAULT 0,
+            hostedEvents INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            reviewerId INTEGER NOT NULL DEFAULT 0,
+            reviewNote TEXT NOT NULL DEFAULT '',
+            metadataJson TEXT NOT NULL DEFAULT '{}',
+            sheetSynced INTEGER NOT NULL DEFAULT 0,
+            reviewedAt TEXT,
+            appliedAt TEXT,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_submission_events (
+            eventId INTEGER PRIMARY KEY AUTOINCREMENT,
+            submissionId INTEGER NOT NULL,
+            actorId INTEGER NOT NULL DEFAULT 0,
+            eventType TEXT NOT NULL,
+            fromStatus TEXT NOT NULL DEFAULT '',
+            toStatus TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            detailsJson TEXT NOT NULL DEFAULT '{}',
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (submissionId) REFERENCES hg_submissions(submissionId) ON DELETE CASCADE
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_point_awards (
+            awardId INTEGER PRIMARY KEY AUTOINCREMENT,
+            submissionId INTEGER NOT NULL DEFAULT 0,
+            guildId INTEGER NOT NULL,
+            targetUserId INTEGER NOT NULL DEFAULT 0,
+            targetRobloxUsername TEXT NOT NULL DEFAULT '',
+            pointType TEXT NOT NULL,
+            points REAL NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT '',
+            awardedBy INTEGER NOT NULL DEFAULT 0,
+            approvedBy INTEGER NOT NULL DEFAULT 0,
+            sheetSynced INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_attendance_records (
+            recordId INTEGER PRIMARY KEY AUTOINCREMENT,
+            submissionId INTEGER NOT NULL DEFAULT 0,
+            guildId INTEGER NOT NULL,
+            eventType TEXT NOT NULL,
+            eventTitle TEXT NOT NULL DEFAULT '',
+            eventDate TEXT NOT NULL DEFAULT '',
+            targetUserId INTEGER NOT NULL DEFAULT 0,
+            targetRobloxUsername TEXT NOT NULL DEFAULT '',
+            participationRole TEXT NOT NULL DEFAULT 'ATTENDEE',
+            memberGroup TEXT NOT NULL DEFAULT '',
+            attendeeCount INTEGER NOT NULL DEFAULT 0,
+            gradedAttendeeCount INTEGER NOT NULL DEFAULT 0,
+            assistedScreens INTEGER NOT NULL DEFAULT 0,
+            quotaPoints REAL NOT NULL DEFAULT 0,
+            promotionEventPoints REAL NOT NULL DEFAULT 0,
+            hostedEvents INTEGER NOT NULL DEFAULT 0,
+            archiveSynced INTEGER NOT NULL DEFAULT 0,
+            scheduleRemoved INTEGER NOT NULL DEFAULT 0,
+            createdBy INTEGER NOT NULL DEFAULT 0,
+            approvedBy INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_sentry_logs (
+            sentryLogId INTEGER PRIMARY KEY AUTOINCREMENT,
+            submissionId INTEGER NOT NULL DEFAULT 0,
+            guildId INTEGER NOT NULL,
+            userId INTEGER NOT NULL,
+            robloxUsername TEXT NOT NULL DEFAULT '',
+            dutyDate TEXT NOT NULL,
+            minutes INTEGER NOT NULL DEFAULT 30,
+            quotaPoints REAL NOT NULL DEFAULT 1,
+            promotionEventPoints REAL NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            reviewerId INTEGER NOT NULL DEFAULT 0,
+            reviewNote TEXT NOT NULL DEFAULT '',
+            sheetSynced INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            reviewedAt TEXT
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_quota_cycles (
+            cycleId INTEGER PRIMARY KEY AUTOINCREMENT,
+            cycleStartDate TEXT NOT NULL,
+            cycleEndDate TEXT NOT NULL,
+            requiredQuotaPoints REAL NOT NULL DEFAULT 4,
+            activeEarlyQuotaPoints REAL NOT NULL DEFAULT 8,
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            resetBy INTEGER NOT NULL DEFAULT 0,
+            resetAt TEXT,
+            metadataJson TEXT NOT NULL DEFAULT '{}',
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(cycleStartDate, cycleEndDate)
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS hg_event_records (
+            eventRecordId INTEGER PRIMARY KEY AUTOINCREMENT,
+            submissionId INTEGER NOT NULL DEFAULT 0,
+            guildId INTEGER NOT NULL,
+            eventType TEXT NOT NULL,
+            eventTitle TEXT NOT NULL DEFAULT '',
+            eventDate TEXT NOT NULL DEFAULT '',
+            hostUserId INTEGER NOT NULL DEFAULT 0,
+            hostRobloxUsername TEXT NOT NULL DEFAULT '',
+            attendeeCount INTEGER NOT NULL DEFAULT 0,
+            archiveSynced INTEGER NOT NULL DEFAULT 0,
+            scheduleRemoved INTEGER NOT NULL DEFAULT 0,
+            metadataJson TEXT NOT NULL DEFAULT '{}',
+            createdBy INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """)
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS reaction_role_entries (
             entryId INTEGER PRIMARY KEY AUTOINCREMENT,
             guildId INTEGER NOT NULL,
@@ -949,6 +1299,47 @@ async def initDb():
         );
         """)
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS link_hub_boards (
+            hubId INTEGER PRIMARY KEY AUTOINCREMENT,
+            guildId INTEGER NOT NULL,
+            channelId INTEGER NOT NULL,
+            rootMessageId INTEGER NOT NULL DEFAULT 0,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            createdBy INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(guildId, channelId)
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS link_hub_sections (
+            sectionId INTEGER PRIMARY KEY AUTOINCREMENT,
+            hubId INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            sortOrder INTEGER NOT NULL DEFAULT 0,
+            messageId INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (hubId) REFERENCES link_hub_boards(hubId) ON DELETE CASCADE
+        );
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS link_hub_entries (
+            entryId INTEGER PRIMARY KEY AUTOINCREMENT,
+            sectionId INTEGER NOT NULL,
+            entryType TEXT NOT NULL DEFAULT 'DOCUMENT',
+            title TEXT NOT NULL,
+            url TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            sortOrder INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (sectionId) REFERENCES link_hub_sections(sectionId) ON DELETE CASCADE
+        );
+        """)
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS retry_jobs (
             jobId INTEGER PRIMARY KEY AUTOINCREMENT,
             jobType TEXT NOT NULL,
@@ -980,7 +1371,28 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_bg_review_actions_session_attendee ON bg_review_actions(sessionId, attendeeUserId, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_bg_intel_reports_target_created ON bg_intelligence_reports(targetUserId, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_bg_intel_reports_guild_created ON bg_intelligence_reports(guildId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_intel_index_target_created ON bg_intelligence_report_index(targetUserId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_intel_index_roblox_created ON bg_intelligence_report_index(robloxUserId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_intel_index_guild_created ON bg_intelligence_report_index(guildId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_identity_history_discord ON bg_identity_history(discordUserId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_identity_history_roblox ON bg_identity_history(robloxUserId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_identity_history_username ON bg_identity_history(robloxUsernameKey, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_username_index_key ON bg_roblox_username_index(robloxUsernameKey, lastSeenAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_username_index_roblox ON bg_roblox_username_index(robloxUserId, lastSeenAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_group_index_group ON bg_roblox_group_index(groupId, lastSeenAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_group_index_roblox ON bg_roblox_group_index(robloxUserId, lastSeenAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_alt_links_source_discord ON bg_alt_links(sourceDiscordUserId, status, updatedAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_alt_links_target_discord ON bg_alt_links(targetDiscordUserId, status, updatedAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_alt_links_source_roblox ON bg_alt_links(sourceRobloxUserId, status, updatedAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_alt_links_target_roblox ON bg_alt_links(targetRobloxUserId, status, updatedAt)",
             "CREATE INDEX IF NOT EXISTS idx_points_pending_processed_user ON points_pending(processedAt, userId)",
+            "CREATE INDEX IF NOT EXISTS idx_roblox_identity_username ON roblox_identity_links(robloxUsername)",
+            "CREATE INDEX IF NOT EXISTS idx_roblox_identity_updated ON roblox_identity_links(updatedAt)",
+            "CREATE INDEX IF NOT EXISTS idx_orbat_mirror_username ON orbat_member_mirror(robloxUsernameKey, active)",
+            "CREATE INDEX IF NOT EXISTS idx_orbat_mirror_discord ON orbat_member_mirror(discordUserId, active)",
+            "CREATE INDEX IF NOT EXISTS idx_orbat_mirror_sheet_active ON orbat_member_mirror(sheetKey, active)",
+            "CREATE INDEX IF NOT EXISTS idx_orbat_mirror_location ON orbat_member_mirror(spreadsheetId, sheetName, rowNumber)",
+            "CREATE INDEX IF NOT EXISTS idx_orbat_mirror_synced ON orbat_member_mirror(lastSyncedAt)",
             "CREATE INDEX IF NOT EXISTS idx_cohost_requests_status ON cohost_requests(status)",
             "CREATE INDEX IF NOT EXISTS idx_cohost_volunteers_message_join ON cohost_volunteers(messageId, joinTime)",
             "CREATE INDEX IF NOT EXISTS idx_scheduled_events_status_time ON scheduled_events(status, eventAtUtc)",
@@ -1049,11 +1461,30 @@ async def initDb():
             "CREATE INDEX IF NOT EXISTS idx_workflow_runs_subject ON workflow_runs(subjectType, subjectId)",
             "CREATE INDEX IF NOT EXISTS idx_workflow_events_run_created ON workflow_events(runId, createdAt)",
             "CREATE INDEX IF NOT EXISTS idx_workflow_events_subject_created ON workflow_events(subjectType, subjectId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_submissions_status ON hg_submissions(guildId, status, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_submissions_target ON hg_submissions(targetUserId, targetRobloxUsername, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_submission_events_submission ON hg_submission_events(submissionId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_point_awards_target ON hg_point_awards(targetUserId, targetRobloxUsername, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_attendance_target ON hg_attendance_records(targetUserId, targetRobloxUsername, eventDate)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_sentry_user_date ON hg_sentry_logs(userId, dutyDate, status)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_quota_cycles_status ON hg_quota_cycles(status, cycleEndDate)",
+            "CREATE INDEX IF NOT EXISTS idx_hg_event_records_event ON hg_event_records(guildId, eventDate, eventType)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_item_visual_refs_state ON bg_item_visual_refs(validationState, updatedAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_item_visual_refs_rule ON bg_item_visual_refs(sourceRuleId)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_bg_item_review_queue_asset_hash ON bg_item_review_queue(assetId, thumbnailHash)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_item_review_queue_status_seen ON bg_item_review_queue(status, lastSeenAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_item_review_queue_channel_message ON bg_item_review_queue(reviewChannelId, reviewMessageId)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_item_review_sources_queue_created ON bg_item_review_sources(queueId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_item_review_actions_queue_created ON bg_item_review_actions(queueId, createdAt)",
+            "CREATE INDEX IF NOT EXISTS idx_bg_item_review_sheet_sync_user_status ON bg_item_review_sheet_sync(discordUserId, entryStatus, processedAt)",
             "CREATE INDEX IF NOT EXISTS idx_reaction_roles_message ON reaction_role_entries(messageId)",
             "CREATE INDEX IF NOT EXISTS idx_reaction_roles_guild_channel ON reaction_role_entries(guildId, channelId)",
             "CREATE INDEX IF NOT EXISTS idx_button_roles_message ON button_role_entries(messageId, orderIndex)",
             "CREATE INDEX IF NOT EXISTS idx_button_roles_guild_channel ON button_role_entries(guildId, channelId)",
             "CREATE INDEX IF NOT EXISTS idx_blocked_self_roles_guild ON blocked_self_roles(guildId)",
+            "CREATE INDEX IF NOT EXISTS idx_link_hubs_guild_channel ON link_hub_boards(guildId, channelId)",
+            "CREATE INDEX IF NOT EXISTS idx_link_hub_sections_hub_sort ON link_hub_sections(hubId, sortOrder, sectionId)",
+            "CREATE INDEX IF NOT EXISTS idx_link_hub_entries_section_sort ON link_hub_entries(sectionId, sortOrder, entryId)",
             "CREATE INDEX IF NOT EXISTS idx_retry_jobs_status_next ON retry_jobs(status, nextAttemptAt)",
             "CREATE INDEX IF NOT EXISTS idx_retry_jobs_type_status ON retry_jobs(jobType, status, updatedAt)",
         )

@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import logging
 import re
 from typing import Optional
@@ -15,7 +15,7 @@ from features.staff.workflows import rendering as workflowRendering
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
 from runtime import taskBudgeter
-from features.staff.sessions import roblox
+from features.staff.sessions.Roblox import robloxUsers
 
 log = logging.getLogger(__name__)
 
@@ -881,7 +881,7 @@ class AnrdPaymentCog(commands.Cog):
         guildId = int(row.get("guildId") or 0)
         if submitterId <= 0:
             return None, "Missing submitter ID."
-        roverResult = await roblox.fetchRobloxUser(submitterId, guildId if guildId > 0 else None)
+        roverResult = await robloxUsers.fetchRobloxUser(submitterId, guildId if guildId > 0 else None)
         username = str(roverResult.robloxUsername or "").strip()
         if username:
             return username, None
@@ -890,6 +890,13 @@ class AnrdPaymentCog(commands.Cog):
         if member is not None:
             guessed = self.guessRobloxUsernameFromDisplayName(member.display_name)
             if guessed:
+                await robloxUsers.rememberKnownRobloxIdentity(
+                    submitterId,
+                    guessed,
+                    source="anrd-nickname",
+                    guildId=guildId if guildId > 0 else None,
+                    confidence=65,
+                )
                 return guessed, "RoVer lookup failed; using nickname fallback."
 
         reason = str(roverResult.error or "No Roblox username linked in RoVer.")
@@ -945,6 +952,13 @@ class AnrdPaymentCog(commands.Cog):
                 if isinstance(fallbackResult, dict) and fallbackResult.get("ok"):
                     result = fallbackResult
                     username = fallbackUsername
+                    await robloxUsers.rememberKnownRobloxIdentity(
+                        int(requestRow.get("submitterId") or 0),
+                        username,
+                        source="anrd-orbat-fallback",
+                        guildId=int(requestRow.get("guildId") or 0) or None,
+                        confidence=70,
+                    )
 
         if not isinstance(result, dict) or not result.get("ok"):
             reason = str(result.get("reason") if isinstance(result, dict) else "Unknown error")

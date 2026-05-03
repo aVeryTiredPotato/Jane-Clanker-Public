@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -13,7 +13,7 @@ from discord.ext import commands
 
 import config
 from features.community.bestOf import service as bestOfService
-from features.staff.sessions import roblox
+from features.staff.sessions.Roblox import robloxUsers
 from runtime import interaction as interactionRuntime
 from runtime import permissions as runtimePermissions
 from runtime import viewBases as runtimeViewBases
@@ -794,7 +794,7 @@ class BestOfCog(commands.Cog):
             resolvedName = fallbackName
             try:
                 async with semaphore:
-                    lookup = await roblox.fetchRobloxUser(int(member.id), guildId=int(guild.id))
+                    lookup = await robloxUsers.fetchRobloxUser(int(member.id), guildId=int(guild.id))
                 robloxUsername = str(lookup.robloxUsername or "").strip()
                 if robloxUsername:
                     resolvedName = robloxUsername

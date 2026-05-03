@@ -110,21 +110,17 @@ def _pickTaseUserRecord(payload: Any, discordUserId: int) -> dict[str, Any]:
             for row in payload["results"]:
                 if isinstance(row, dict) and _safeInt(row.get("userId")) == int(discordUserId):
                     return row
-            for row in payload["results"]:
-                if isinstance(row, dict):
-                    return row
             return {}
         if isinstance(payload.get("data"), dict):
             return _pickTaseUserRecord(payload["data"], discordUserId)
         if isinstance(payload.get("data"), list):
             return _pickTaseUserRecord(payload["data"], discordUserId)
-        return payload
+        if _safeInt(payload.get("userId")) == int(discordUserId):
+            return payload
+        return {}
     if isinstance(payload, list):
         for row in payload:
             if isinstance(row, dict) and _safeInt(row.get("userId")) == int(discordUserId):
-                return row
-        for row in payload:
-            if isinstance(row, dict):
                 return row
     return {}
 
@@ -270,7 +266,7 @@ def _normalizeMocoPayload(payload: Any, robloxUserId: int) -> tuple[list[dict[st
                 record = row
                 break
         else:
-            record = users[0] if users and isinstance(users[0], dict) else {}
+            record = payload if _safeInt(payload.get("userId")) == int(robloxUserId) else {}
 
     found = bool(record.get("found", record.get("success", payload.get("found", payload.get("success", False)))))
     rawGroups = record.get("groups") or record.get("flaggedGroups") or record.get("matches") or []

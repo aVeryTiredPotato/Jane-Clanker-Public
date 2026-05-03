@@ -30,6 +30,34 @@ def formatRoleIds(roleIds: list[int]) -> str:
 
 
 @lru_cache(maxsize=1)
+def getAllowedCommandGuildIds() -> set[int]:
+    configured = getattr(config, "allowedCommandGuildIds", None) or []
+    normalized: set[int] = set()
+    for value in configured:
+        parsed = toPositiveInt(value)
+        if parsed > 0:
+            normalized.add(parsed)
+    return normalized
+
+
+def isApprovedCommandGuild(guildId: int | None) -> bool:
+    parsedGuildId = toPositiveInt(guildId)
+    if parsedGuildId <= 0:
+        return False
+    allowedGuildIds = getAllowedCommandGuildIds()
+    if not allowedGuildIds:
+        return False
+    return parsedGuildId in allowedGuildIds
+
+
+def hasApprovedAdminOverride(member: discord.Member) -> bool:
+    if not hasAdminOrManageGuild(member):
+        return False
+    guildId = int(getattr(getattr(member, "guild", None), "id", 0) or 0)
+    return isApprovedCommandGuild(guildId)
+
+
+@lru_cache(maxsize=1)
 def getCohostAllowedRoleIds() -> set[int]:
     roleIds = getattr(config, "cohostAllowedRoleIds", None)
     if not roleIds:
@@ -43,6 +71,8 @@ def getCohostAllowedRoleIds() -> set[int]:
 
 
 def hasCohostPermission(member: discord.Member) -> bool:
+    if hasApprovedAdminOverride(member):
+        return True
     allowedRoles = getCohostAllowedRoleIds()
     if not allowedRoles:
         return True
@@ -63,6 +93,8 @@ def getMiddleHighRankRoleIds() -> set[int]:
 
 
 def hasMiddleHighRankRole(member: discord.Member) -> bool:
+    if hasApprovedAdminOverride(member):
+        return True
     allowedRoles = getMiddleHighRankRoleIds()
     if not allowedRoles:
         return False
@@ -83,6 +115,8 @@ def getBgCheckCertifiedRoleIds() -> set[int]:
 
 
 def hasBgCheckCertifiedRole(member: discord.Member) -> bool:
+    if hasApprovedAdminOverride(member):
+        return True
     roleIds = getBgCheckCertifiedRoleIds()
     if not roleIds:
         return False
@@ -119,6 +153,7 @@ def isCommandExecutionAllowed(userId: int) -> bool:
 
 
 def clearPermissionCaches() -> None:
+    getAllowedCommandGuildIds.cache_clear()
     getCohostAllowedRoleIds.cache_clear()
     getMiddleHighRankRoleIds.cache_clear()
     getTemporaryCommandAllowedUserIds.cache_clear()

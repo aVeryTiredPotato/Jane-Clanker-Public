@@ -23,7 +23,7 @@ _buildGradingEmbed: Optional[Callable[..., discord.Embed]] = None
 _setPendingBgRole: Optional[Callable[..., Awaitable[None]]] = None
 _postOrientationResults: Optional[Callable[..., Awaitable[None]]] = None
 _deleteSessionMessage: Optional[Callable[..., Awaitable[None]]] = None
-_postBgQueue: Optional[Callable[..., Awaitable[None]]] = None
+_routeBgcSpreadsheet: Optional[Callable[..., Awaitable[Any]]] = None
 
 
 def configure(
@@ -42,7 +42,7 @@ def configure(
     setPendingBgRole: Callable[..., Awaitable[None]],
     postOrientationResults: Callable[..., Awaitable[None]],
     deleteSessionMessage: Callable[..., Awaitable[None]],
-    postBgQueue: Callable[..., Awaitable[None]],
+    routeBgcSpreadsheet: Callable[..., Awaitable[Any]],
 ) -> None:
     global _service
     global _canClockIn
@@ -58,7 +58,7 @@ def configure(
     global _setPendingBgRole
     global _postOrientationResults
     global _deleteSessionMessage
-    global _postBgQueue
+    global _routeBgcSpreadsheet
 
     _service = serviceModule
     _canClockIn = canClockIn
@@ -74,7 +74,55 @@ def configure(
     _setPendingBgRole = setPendingBgRole
     _postOrientationResults = postOrientationResults
     _deleteSessionMessage = deleteSessionMessage
-    _postBgQueue = postBgQueue
+    _routeBgcSpreadsheet = routeBgcSpreadsheet
+
+
+def _isSpreadsheetRoutingResult(result: object) -> bool:
+    return all(hasattr(result, attr) for attr in ("url", "expected_channel_ids", "posted_channel_ids", "skipped_reason"))
+
+
+def _spreadsheetRoutingSucceeded(result: object) -> bool:
+    if not _isSpreadsheetRoutingResult(result):
+        return False
+    url = str(getattr(result, "url", "") or "").strip()
+    skippedReason = str(getattr(result, "skipped_reason", "") or "").strip().casefold()
+    if not url:
+        return skippedReason == "no passing attendees need a bgc spreadsheet."
+    return True
+
+
+def _positiveInt(value: object) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def _spreadsheetRoutingNote(result: object) -> str:
+    if not _isSpreadsheetRoutingResult(result):
+        return ""
+
+    url = str(getattr(result, "url", "") or "").strip()
+    skippedReason = str(getattr(result, "skipped_reason", "") or "").strip()
+    if not url:
+        return skippedReason
+
+    expectedIds = {
+        _positiveInt(channelId)
+        for channelId in list(getattr(result, "expected_channel_ids", []) or [])
+        if _positiveInt(channelId) > 0
+    }
+    postedIds = {
+        _positiveInt(channelId)
+        for channelId in list(getattr(result, "posted_channel_ids", []) or [])
+        if _positiveInt(channelId) > 0
+    }
+    if not expectedIds:
+        return "BGC spreadsheet created, but no review channels were configured for the passing attendees."
+    if expectedIds - postedIds:
+        return f"BGC spreadsheet created; link posted to `{len(postedIds)}/{len(expectedIds)}` review channel(s)."
+    return "BGC spreadsheet link posted."
 
 
 async def _bgQueuePostingSummary(sessionId: int) -> tuple[int, int, bool, bool]:
@@ -123,52 +171,61 @@ class JoinPasswordModal(ui.Modal, title="Enter Password"):
                 ephemeral=True,
             )
 
-        session = await _service.getSession(self.sessionId)
-        if not session or session["status"] != "OPEN":
+        clockInResult = await _service.attemptClockIn(self.sessionId, interaction.user.id, str(self.password.value))
+        resultStatus = str(clockInResult.get("status") or "").upper()
+        if resultStatus == "SESSION_NOT_FOUND":
             return await _safeInteractionReply(
                 interaction,
-                content="This orientation is not currently open for clock-ins.",
+                content="This orientation session could not be found.",
                 ephemeral=True,
             )
-
-        attendeeCount = len(await _service.getAttendees(self.sessionId))
-        if session.get("maxAttendeeLimit") <= attendeeCount:
+        if resultStatus == "SESSION_CLOSED":
+            sessionStatus = str(clockInResult.get("sessionStatus") or "").upper()
+            message = "This orientation is not currently open for clock-ins."
+            if sessionStatus == "FULL":
+                message = "This orientation has reached its attendee limit, try your luck next time!"
+            return await _safeInteractionReply(
+                interaction,
+                content=message,
+                ephemeral=True,
+            )
+        if resultStatus == "FULL":
             return await _safeInteractionReply(
                 interaction,
                 content="This orientation has reached its attendee limit, try your luck next time!",
                 ephemeral=True,
             )
-
-        existing = await _service.getAttendee(self.sessionId, interaction.user.id)
-        if existing:
+        if resultStatus == "ALREADY_JOINED":
             return await _safeInteractionReply(
                 interaction,
                 content="You are already clocked in to this orientation.",
                 ephemeral=True,
             )
-
-        ok = await _service.verifyPassword(self.sessionId, str(self.password.value))
-        if not ok:
+        if resultStatus == "BAD_PASSWORD":
             return await _safeInteractionReply(
                 interaction,
                 content="The password you entered is incorrect. Please try again.",
                 ephemeral=True,
             )
+        if resultStatus != "ADDED":
+            return await _safeInteractionReply(
+                interaction,
+                content="This orientation could not process your clock-in right now. Please try again.",
+                ephemeral=True,
+            )
 
-        await _service.addAttendee(self.sessionId, interaction.user.id)
         await _safeInteractionReply(
             interaction,
             content="You have clocked in to this orientation.",
             ephemeral=True,
         )
 
-        attendeeCount = len(await _service.getAttendees(self.sessionId))
-        if attendeeCount >= session.get("maxAttendeeLimit", 30):
-            await _service.setStatus(self.sessionId, "FULL")
-            await _updateSessionMessage(interaction.client, self.sessionId)
-
         try:
-            await _requestSessionMessageUpdate(interaction.client, self.sessionId)
+            await _requestSessionMessageUpdate(
+                interaction.client,
+                self.sessionId,
+                delaySec=0 if bool(clockInResult.get("reachedLimit")) else None,
+            )
         except Exception:
             log.exception("Failed to refresh session message after attendee clock-in (session=%s).", self.sessionId)
 
@@ -277,18 +334,31 @@ class SessionView(ui.View):
         await _safeInteractionDefer(interaction, ephemeral=True)
         try:
             if session.get("sessionType") == "orientation":
-                await _postBgQueue(interaction.client, sessionId, interaction.guild)
+                bgRoutingResult = None
+                try:
+                    bgRoutingResult = await _routeBgcSpreadsheet(interaction.client, sessionId, interaction.guild)
+                except Exception:
+                    log.exception("Failed to route BG spreadsheet/queue for orientation session %s.", sessionId)
                 adultCount, minorCount, adultPosted, minorPosted = await _bgQueuePostingSummary(sessionId)
-                if adultPosted and minorPosted:
+                spreadsheetRouting = _isSpreadsheetRoutingResult(bgRoutingResult)
+                if spreadsheetRouting or (adultPosted and minorPosted):
                     await _postOrientationResults(interaction.client, sessionId)
                     await _service.finishSession(sessionId)
                     await _deleteSessionMessage(interaction.client, sessionId)
+                    routingNote = _spreadsheetRoutingNote(bgRoutingResult) if spreadsheetRouting else "BG queues posted for moderation."
+                    if spreadsheetRouting and not _spreadsheetRoutingSucceeded(bgRoutingResult):
+                        log.error(
+                            "Orientation session %s finished with incomplete BG spreadsheet routing: %s",
+                            sessionId,
+                            routingNote,
+                        )
                     await _safeInteractionReply(
                         interaction,
                         (
-                            "Finished. BG queues posted for moderation.\n"
+                            "Finished. Orientation results posted.\n"
                             f"+18 routed: `{adultCount}`\n"
-                            f"-18 routed: `{minorCount}`"
+                            f"-18 routed: `{minorCount}`\n"
+                            f"{routingNote}"
                         ),
                         ephemeral=True,
                     )
@@ -345,7 +415,7 @@ class SessionView(ui.View):
                 "This orientation is not currently open for clock-ins.",
                 ephemeral=True,
             )
-        attendeeCount = len(await _service.getAttendees(sessionId))
+        attendeeCount = await _service.getAttendeeCount(sessionId)
         if session.get("maxAttendeeLimit") <= attendeeCount:
             return await _safeInteractionReply(
                 interaction,

@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import Any, Awaitable, Callable
 
 import config
+from . import taskStats
 
 
 @dataclass
@@ -65,6 +66,10 @@ class _FeatureBudget:
                     self._failed += 1
                 self._latencySamples.append(latencyMs)
             self._semaphore.release()
+            try:
+                await taskStats.record(self.name, latencyMs)
+            except Exception:
+                pass
 
     async def snapshot(self) -> FeatureStats:
         async with self._lock:
@@ -156,7 +161,13 @@ _defaultBudgeter = AsyncTaskBudgeter(
     {
         "robloxApi": _limitFromConfig("runtimeBudgetRobloxConcurrency", 6),
         "sheetsIo": _limitFromConfig("runtimeBudgetSheetsConcurrency", 2),
+        "sheetsInteractive": _limitFromConfig(
+            "runtimeBudgetInteractiveSheetsConcurrency",
+            _limitFromConfig("runtimeBudgetSheetsConcurrency", 2),
+        ),
+        "sheetsBackground": _limitFromConfig("runtimeBudgetBackgroundSheetsConcurrency", 1),
         "discordIo": _limitFromConfig("runtimeBudgetDiscordConcurrency", 6),
+        "interactionAck": _limitFromConfig("runtimeBudgetInteractionAckConcurrency", 24),
         "backgroundJobs": _limitFromConfig("runtimeBudgetBackgroundConcurrency", 2),
     }
 )
@@ -171,7 +182,15 @@ async def runBudgeted(feature: str, opFactory: Callable[[], Awaitable[Any]]) -> 
 
 
 async def runSheetsThread(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    return await runThreaded("sheetsIo", fn, *args, **kwargs)
+    return await runInteractiveSheetsThread(fn, *args, **kwargs)
+
+
+async def runInteractiveSheetsThread(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    return await runThreaded("sheetsInteractive", fn, *args, **kwargs)
+
+
+async def runBackgroundSheetsThread(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    return await runThreaded("sheetsBackground", fn, *args, **kwargs)
 
 
 async def runThreaded(
@@ -188,6 +207,10 @@ async def runThreaded(
 
 async def runDiscord(opFactory: Callable[[], Awaitable[Any]]) -> Any:
     return await runBudgeted("discordIo", opFactory)
+
+
+async def runInteractionAck(opFactory: Callable[[], Awaitable[Any]]) -> Any:
+    return await runBudgeted("interactionAck", opFactory)
 
 
 async def runRoblox(opFactory: Callable[[], Awaitable[Any]]) -> Any:

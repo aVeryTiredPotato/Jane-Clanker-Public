@@ -2,136 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import discord
 
 from db.sqlite import execute, fetchAll, fetchOne
+from features.staff.trainingLog import parsing as trainingLogParsing
 from runtime import orgFeatureGate
 from runtime import orgProfiles
 
 log = logging.getLogger(__name__)
 
-_hostMentionRegex = re.compile(r"<@!?(\d+)>")
-_certificationTitleRegex = re.compile(
-    r"^(Grid|Emergency|Turbine|Solo|Supervisor) Certification(?: (Training|Examination))? Session Completed$",
-    re.IGNORECASE,
-)
-_mirrorSourceFooterRegex = re.compile(r"^Source message ID:\s*(\d+)\s*$", re.IGNORECASE)
-_defaultStatsOrder = [
-    "ORIENTATION",
-    "GRID_TRAINING",
-    "GRID_EXAM",
-    "EMERGENCY_TRAINING",
-    "EMERGENCY_EXAM",
-    "TURBINE",
-    "SOLO",
-    "SUPERVISOR",
-]
-_weeklySummaryTypeOrder = [
-    ("GRID", "Grid"),
-    ("EMERGENCY", "Emergency"),
-    ("TURBINE", "Turbine"),
-    ("SOLO", "Solo"),
-    ("SUPERVISOR", "Supervisor"),
-]
-_trainingMirrorColor = discord.Color.from_rgb(245, 150, 78)
-_summaryEmbedTitle = "Training Log Summary"
-
-
-@dataclass(slots=True)
-class ParsedTrainingResult:
-    eventKind: str
-    certType: str
-    certVariant: str
-    title: str
-    hostId: int
-    hostText: str
-    passCount: int
-    failCount: int
-    passAttendees: tuple[str, ...] = ()
-    failAttendees: tuple[str, ...] = ()
-
-
-def _normalizeWhitespace(value: object) -> str:
-    return " ".join(str(value or "").strip().split())
-
-
-def _normalizeTitleLine(value: object) -> str:
-    text = _normalizeWhitespace(value)
-    text = re.sub(r"^#{1,6}\s*", "", text).strip()
-    for wrapper in ("**", "__", "*", "_", "`"):
-        if text.startswith(wrapper) and text.endswith(wrapper) and len(text) > (len(wrapper) * 2):
-            text = text[len(wrapper):-len(wrapper)].strip()
-    return _normalizeWhitespace(text)
-
-
-def _normalizeSectionControlLine(value: object) -> str:
-    text = _normalizeTitleLine(value).casefold()
-    return text.strip("*_~`> ")
-
-
-def _isSectionBoundaryLine(value: object) -> bool:
-    line = _normalizeSectionControlLine(value)
-    if not line:
-        return False
-    if line.endswith(":") and (
-        line.startswith("certified recipients")
-        or line.startswith("failed attendees")
-        or line in {"passed:", "failed:"}
-    ):
-        return True
-    if line.startswith("host:") or line.startswith("co-host") or line.startswith("other cohosts"):
-        return True
-    if line.startswith("each recipient"):
-        return True
-    if line.startswith("common mistakes") or line.startswith("please do not") or line.startswith("don't be discouraged"):
-        return True
-    if line.startswith("totally emergency exam") or line.startswith("supervisor cert examination"):
-        return True
-    if line == "passed" or line == "failed":
-        return True
-    if line == "none" or line.startswith("none!"):
-        return True
-    return False
-
-
-def _normalizeNameLookup(value: object) -> str:
-    text = _normalizeWhitespace(value)
-    if text.startswith("@"):
-        text = text[1:].strip()
-    text = re.sub(r"\[[^\]]+\]", "", text).strip()
-    return _normalizeWhitespace(text).casefold()
-
-
-def _cleanVisibleLabel(value: object) -> str:
-    text = _normalizeWhitespace(value)
-    if text.startswith("@"):
-        text = text[1:].strip()
-    text = re.sub(r"\[[^\]]+\]", "", text).strip()
-    return _normalizeWhitespace(text)
-
-
-def _formatPercent(numerator: int, denominator: int) -> str:
-    if denominator <= 0:
-        return "n/a"
-    return f"{(float(numerator) / float(denominator)) * 100.0:.1f}%"
-
-
-def _parseIsoOrNow(rawValue: object) -> datetime:
-    rawText = str(rawValue or "").strip()
-    if rawText:
-        try:
-            parsed = datetime.fromisoformat(rawText)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-        except ValueError:
-            pass
-    return datetime.now(timezone.utc)
+ParsedTrainingResult = trainingLogParsing.ParsedTrainingResult
+_hostMentionRegex = trainingLogParsing.hostMentionRegex
+_mirrorSourceFooterRegex = trainingLogParsing.mirrorSourceFooterRegex
+_defaultStatsOrder = trainingLogParsing.defaultStatsOrder
+_weeklySummaryTypeOrder = trainingLogParsing.weeklySummaryTypeOrder
+_trainingMirrorColor = trainingLogParsing.trainingMirrorColor
+_summaryEmbedTitle = trainingLogParsing.summaryEmbedTitle
+_normalizeWhitespace = trainingLogParsing.normalizeWhitespace
+_normalizeNameLookup = trainingLogParsing.normalizeNameLookup
+_formatPercent = trainingLogParsing.formatPercent
+_parseIsoOrNow = trainingLogParsing.parseIsoOrNow
 
 
 class TrainingLogCoordinator:
@@ -156,29 +49,6 @@ class TrainingLogCoordinator:
         self._readySyncCooldownSec = 120
         self._summarySettingBaseKey = "trainingLogSummaryMessageId"
         self._summaryChannelSettingBaseKey = "trainingLogSummaryChannelId"
-
-    def _extractMessageText(self, message: discord.Message) -> str:
-        parts: list[str] = []
-        content = str(getattr(message, "content", "") or "").strip()
-        if content:
-            parts.append(content)
-
-        for embed in list(getattr(message, "embeds", []) or []):
-            title = _normalizeWhitespace(getattr(embed, "title", None))
-            if title:
-                parts.append(title)
-            description = str(getattr(embed, "description", "") or "").strip()
-            if description:
-                parts.append(description)
-            for field in list(getattr(embed, "fields", []) or []):
-                fieldName = _normalizeWhitespace(getattr(field, "name", None))
-                fieldValue = str(getattr(field, "value", "") or "").strip()
-                if fieldName and fieldValue:
-                    parts.append(f"{fieldName}:\n{fieldValue}")
-                elif fieldValue:
-                    parts.append(fieldValue)
-
-        return "\n\n".join(part for part in parts if str(part or "").strip())
 
     def _sourceChannelId(self) -> int:
         return self._sourceChannelIdForOrg(None)
@@ -358,143 +228,6 @@ class TrainingLogCoordinator:
             return channel
         return None
 
-    def _extractHost(self, hostLine: str, guild: Optional[discord.Guild]) -> tuple[int, str]:
-        mentionMatch = _hostMentionRegex.search(hostLine)
-        if mentionMatch:
-            mentionedUserId = int(mentionMatch.group(1))
-            if guild is not None:
-                member = guild.get_member(mentionedUserId)
-                if member is not None:
-                    return mentionedUserId, _normalizeWhitespace(member.display_name)
-            return mentionedUserId, self._resolveMentionLabel(hostLine.split(":", 1)[-1], guild)
-
-        hostText = _cleanVisibleLabel(hostLine.split(":", 1)[-1])
-        lookupTarget = _normalizeNameLookup(hostText)
-        if guild is not None and lookupTarget:
-            matches = [
-                member
-                for member in guild.members
-                if _normalizeNameLookup(member.display_name) == lookupTarget or _normalizeNameLookup(member.name) == lookupTarget
-            ]
-            if len(matches) == 1:
-                return int(matches[0].id), _normalizeWhitespace(matches[0].display_name)
-        return 0, hostText
-
-    def _resolveMentionLabel(self, rawLine: str, guild: Optional[discord.Guild]) -> str:
-        mentionMatch = _hostMentionRegex.search(str(rawLine or ""))
-        if mentionMatch:
-            mentionedUserId = int(mentionMatch.group(1))
-            if guild is not None:
-                member = guild.get_member(mentionedUserId)
-                if member is not None:
-                    return _normalizeWhitespace(member.display_name)
-            return f"user {mentionedUserId}"
-        return _cleanVisibleLabel(rawLine)
-
-    def _extractSectionEntries(self, lines: list[str], headerPrefix: str, guild: Optional[discord.Guild]) -> list[str]:
-        inSection = False
-        entries: list[str] = []
-        normalizedHeader = _normalizeSectionControlLine(headerPrefix)
-        for rawLine in lines:
-            line = str(rawLine or "").strip()
-            if not inSection:
-                if _normalizeSectionControlLine(line).startswith(normalizedHeader):
-                    inSection = True
-                continue
-            if not line:
-                continue
-
-            if _isSectionBoundaryLine(line):
-                break
-
-            cleaned = self._resolveMentionLabel(line, guild)
-            if cleaned:
-                entries.append(cleaned)
-        return entries
-
-    def _countSectionEntries(self, lines: list[str], headerPrefix: str) -> int:
-        inSection = False
-        count = 0
-        normalizedHeader = _normalizeSectionControlLine(headerPrefix)
-        for rawLine in lines:
-            line = str(rawLine or "").strip()
-            if not inSection:
-                if _normalizeSectionControlLine(line).startswith(normalizedHeader):
-                    inSection = True
-                continue
-            if not line:
-                continue
-
-            if _isSectionBoundaryLine(line):
-                break
-
-            count += 1
-        return count
-
-    def parseSourceMessage(self, message: discord.Message) -> ParsedTrainingResult | None:
-        content = self._extractMessageText(message)
-        if not content:
-            return None
-        lines = [str(line or "").rstrip() for line in content.splitlines()]
-        if not lines:
-            return None
-        firstLine = str(next((line.strip() for line in lines if line.strip()), "")).strip()
-        if not firstLine:
-            return None
-        normalizedTitle = _normalizeTitleLine(firstLine)
-
-        hostLine = next((line for line in lines if str(line).strip().lower().startswith("host:")), "")
-        hostId, hostText = self._extractHost(hostLine, message.guild if isinstance(message.guild, discord.Guild) else None)
-        guild = message.guild if isinstance(message.guild, discord.Guild) else None
-        passAttendees = self._extractSectionEntries(lines, "**Certified Recipients (Pass):**", guild)
-        if not passAttendees:
-            passAttendees = self._extractSectionEntries(lines, "Certified Recipients (Pass):", guild)
-        failAttendees = self._extractSectionEntries(lines, "**Failed Attendees:**", guild)
-        if not failAttendees:
-            failAttendees = self._extractSectionEntries(lines, "Failed Attendees:", guild)
-        passCount = len(passAttendees)
-        failCount = len(failAttendees)
-
-        if normalizedTitle.casefold() == "orientation results":
-            return ParsedTrainingResult(
-                eventKind="ORIENTATION",
-                certType="ORIENTATION",
-                certVariant="GENERAL",
-                title="Orientation Results",
-                hostId=hostId,
-                hostText=hostText,
-                passCount=passCount,
-                failCount=failCount,
-                passAttendees=tuple(passAttendees),
-                failAttendees=tuple(failAttendees),
-            )
-
-        titleMatch = _certificationTitleRegex.match(normalizedTitle)
-        if titleMatch is None:
-            return None
-
-        certType = str(titleMatch.group(1) or "").strip().upper()
-        variantRaw = str(titleMatch.group(2) or "").strip().upper()
-        if variantRaw == "TRAINING":
-            certVariant = "TRAINING"
-        elif variantRaw == "EXAMINATION":
-            certVariant = "EXAM"
-        else:
-            certVariant = "GENERAL"
-
-        return ParsedTrainingResult(
-            eventKind="CERTIFICATION",
-            certType=certType,
-            certVariant=certVariant,
-            title=normalizedTitle,
-            hostId=hostId,
-            hostText=hostText,
-            passCount=passCount,
-            failCount=failCount,
-            passAttendees=tuple(passAttendees),
-            failAttendees=tuple(failAttendees),
-        )
-
     async def _getStoredLog(self, messageId: int) -> dict[str, Any] | None:
         return await fetchOne("SELECT * FROM training_result_logs WHERE messageId = ?", (int(messageId),))
 
@@ -514,7 +247,7 @@ class TrainingLogCoordinator:
             (str(storedRow.get("hostText") or "").strip(), str(parsed.hostText or "").strip()),
             (int(storedRow.get("passCount") or 0), int(parsed.passCount or 0)),
             (int(storedRow.get("failCount") or 0), int(parsed.failCount or 0)),
-            (str(storedRow.get("rawContent") or ""), self._extractMessageText(message)),
+            (str(storedRow.get("rawContent") or ""), trainingLogParsing.extractMessageText(message)),
         ]
         return any(left != right for left, right in comparisons)
 
@@ -569,7 +302,7 @@ class TrainingLogCoordinator:
                 str(parsed.hostText or "").strip(),
                 int(parsed.passCount or 0),
                 int(parsed.failCount or 0),
-                self._extractMessageText(message),
+                trainingLogParsing.extractMessageText(message),
             ),
         )
 
@@ -987,6 +720,24 @@ class TrainingLogCoordinator:
             return True
         return False
 
+    def shouldInspectSourceMessage(self, message: discord.Message, *, orgKey: str | None = None) -> bool:
+        sourceChannelId = int(getattr(message.channel, "id", 0) or 0)
+        profile = (
+            orgProfiles.getOrganizationProfile(self.config, orgKey=orgKey)
+            if str(orgKey or "").strip()
+            else self._trainingProfileForSourceChannel(sourceChannelId)
+        )
+        if profile is None:
+            return False
+        resolvedOrgKey = profile.key
+        if sourceChannelId != self._sourceChannelIdForOrg(resolvedOrgKey):
+            return False
+        return orgFeatureGate.isFeatureEnabledForGuild(
+            self.config,
+            int(profile.primaryGuildId or 0),
+            "anro-training-logs",
+        )
+
     async def _captureRelevantMessage(
         self,
         message: discord.Message,
@@ -1017,26 +768,10 @@ class TrainingLogCoordinator:
             return False
         messageLock = self._messageLock(int(message.id))
         async with messageLock:
-            parsed = self.parseSourceMessage(message)
+            parsed = trainingLogParsing.parseSourceMessage(message)
             if parsed is None:
-                extractedText = self._extractMessageText(message)
-                log.warning(
-                    "Training source message could not be parsed: messageId=%s authorId=%s firstLine=%r",
-                    int(getattr(message, "id", 0) or 0),
-                    int(getattr(getattr(message, "author", None), "id", 0) or 0),
-                    str(next((line.strip() for line in str(extractedText or "").splitlines() if line.strip()), "")).strip(),
-                )
                 return False
             if not self._isRelevantSourceMessage(message, parsed, orgKey=resolvedOrgKey):
-                authorId = int(getattr(getattr(message, "author", None), "id", 0) or 0)
-                log.info(
-                    "Training source message ignored after parse: messageId=%s eventKind=%s title=%r authorId=%s author=%s",
-                    int(getattr(message, "id", 0) or 0),
-                    str(parsed.eventKind or "").strip(),
-                    str(parsed.title or "").strip(),
-                    authorId,
-                    str(getattr(getattr(message, "author", None), "name", "") or getattr(message, "author", "unknown")),
-                )
                 return False
 
             sourceMessageId = int(message.id)

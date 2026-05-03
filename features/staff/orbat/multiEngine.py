@@ -290,15 +290,17 @@ class MultiOrbatEngine:
 
         return self._withRetry(_run)
 
-    def batchGetValues(self, sheetKey: str, ranges: list[str]) -> list[dict[str, Any]]:
+    def batchGetValues(self, sheetKey: str, ranges: list[str], **kwargs: Any) -> list[dict[str, Any]]:
         sheet = self.getSheetConfig(sheetKey)
         service = self._getService(sheet)
 
         def _run():
+            requestParams = {"spreadsheetId": sheet.spreadsheetId, "ranges": ranges}
+            requestParams.update(kwargs)
             return (
                 service.spreadsheets()
                 .values()
-                .batchGet(spreadsheetId=sheet.spreadsheetId, ranges=ranges)
+                .batchGet(**requestParams)
                 .execute()
                 .get("valueRanges", [])
             )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -49,80 +48,31 @@ class BgCheckView(ui.View):
         if self.reviewBucket == bgBuckets.minorBgReviewBucket:
             self.remove_item(self.outfitsBtn)
 
-    @ui.button(label="Approve", style=discord.ButtonStyle.success)
-    async def approveBtn(self, interaction: discord.Interaction, _: ui.Button):
+    async def _applyDecision(self, interaction: discord.Interaction, newStatus: str) -> None:
         if not await _dep("requireModPermission")(interaction):
             return
 
-        await _dep("service").setBgStatusWithReviewer(
+        result = await _dep("applyBgDecision")(
+            interaction,
             self.sessionId,
             self.targetUserId,
-            "APPROVED",
-            int(interaction.user.id),
+            newStatus,
+            reviewBucket=self.reviewBucket,
+            refreshBgCheckMessage=True,
         )
-        _dep("clearBgClaim")(self.sessionId, self.targetUserId)
-        session = await _dep("service").getSession(self.sessionId)
-        sessionType = (session or {}).get("sessionType")
-        sessionGuild = _dep("sessionGuild")(interaction.client, session, interaction.guild)
-        if sessionType in {"orientation", "bg-check"}:
-            await _dep("setPendingBgRole")(sessionGuild, self.targetUserId, False)
-        if sessionType == "orientation":
-            await _dep("service").awardHostPointIfEligible(self.sessionId, self.targetUserId)
-        await _dep("safeInteractionReply")(interaction, f"Approved <@{self.targetUserId}>.", ephemeral=True)
-        await _dep("updateSessionMessage")(interaction.client, self.sessionId)
-        await _dep("updateBgCheckMessage")(interaction, self.sessionId, self.targetUserId, self.reviewBucket)
-        await _dep("requestBgQueueMessageUpdate")(interaction.client, self.sessionId)
-        await _dep("maybeNotifyBgComplete")(interaction, self.sessionId)
-        asyncio.create_task(
-            _dep("maybeAutoAcceptRoblox")(
-                interaction.client,
-                sessionGuild,
-                self.sessionId,
-                self.targetUserId,
-            )
+        await _dep("safeInteractionReply")(
+            interaction,
+            f"{result.statusText} <@{self.targetUserId}>.",
+            ephemeral=True,
         )
-        asyncio.create_task(
-            _dep("sendRobloxJoinRequestDm")(interaction.client, self.sessionId, self.targetUserId)
-        )
-        if sessionType == "orientation":
-            asyncio.create_task(
-                _dep("applyRecruitmentOrientationBonus")(
-                    interaction.client,
-                    self.targetUserId,
-                )
-            )
+
+    @ui.button(label="Approve", style=discord.ButtonStyle.success)
+    async def approveBtn(self, interaction: discord.Interaction, _: ui.Button):
+        await self._applyDecision(interaction, "APPROVED")
 
     @ui.button(label="Reject", style=discord.ButtonStyle.danger)
     async def rejectBtn(self, interaction: discord.Interaction, _: ui.Button):
-        if not await _dep("requireModPermission")(interaction):
-            return
-
-        statusChanged = await _dep("service").setBgStatusWithReviewer(
-            self.sessionId,
-            self.targetUserId,
-            "REJECTED",
-            int(interaction.user.id),
-        )
-        _dep("clearBgClaim")(self.sessionId, self.targetUserId)
-        session = await _dep("service").getSession(self.sessionId)
-        sessionType = (session or {}).get("sessionType")
-        sessionGuild = _dep("sessionGuild")(interaction.client, session, interaction.guild)
-        if statusChanged:
-            asyncio.create_task(
-                _dep("postBgFailureForumEntry")(
-                    interaction.client,
-                    sessionGuild,
-                    self.targetUserId,
-                    int(interaction.user.id),
-                )
-            )
-        if sessionType in {"orientation", "bg-check"}:
-            await _dep("setPendingBgRole")(sessionGuild, self.targetUserId, False)
-        await _dep("safeInteractionReply")(interaction, f"Rejected <@{self.targetUserId}>.", ephemeral=True)
-        await _dep("updateSessionMessage")(interaction.client, self.sessionId)
-        await _dep("updateBgCheckMessage")(interaction, self.sessionId, self.targetUserId, self.reviewBucket)
-        await _dep("requestBgQueueMessageUpdate")(interaction.client, self.sessionId)
-        await _dep("maybeNotifyBgComplete")(interaction, self.sessionId)
+        await self._applyDecision(interaction, "REJECTED")
 
     @ui.button(label="Get Info", style=discord.ButtonStyle.secondary, row=1)
     async def infoBtn(self, interaction: discord.Interaction, _: ui.Button):

@@ -185,7 +185,17 @@ async def updateRecruitmentPatrolStatus(patrolId: int, status: str) -> None:
         )
 
 
-async def setRecruitmentMessageId(submissionId: int, messageId: int) -> None:
+async def setRecruitmentMessageId(
+    submissionId: int,
+    messageId: int,
+    channelId: Optional[int] = None,
+) -> None:
+    if channelId and int(channelId) > 0:
+        await execute(
+            "UPDATE recruitment_submissions SET channelId = ?, messageId = ? WHERE submissionId = ?",
+            (int(channelId), messageId, submissionId),
+        )
+        return
     await execute(
         "UPDATE recruitment_submissions SET messageId = ? WHERE submissionId = ?",
         (messageId, submissionId),
@@ -198,7 +208,17 @@ async def setRecruitmentImageUrls(submissionId: int, imageUrls: List[str]) -> No
     )
 
 
-async def setRecruitmentTimeMessageId(submissionId: int, messageId: int) -> None:
+async def setRecruitmentTimeMessageId(
+    submissionId: int,
+    messageId: int,
+    channelId: Optional[int] = None,
+) -> None:
+    if channelId and int(channelId) > 0:
+        await execute(
+            "UPDATE recruitment_time_submissions SET channelId = ?, messageId = ? WHERE submissionId = ?",
+            (int(channelId), messageId, submissionId),
+        )
+        return
     await execute(
         "UPDATE recruitment_time_submissions SET messageId = ? WHERE submissionId = ?",
         (messageId, submissionId),

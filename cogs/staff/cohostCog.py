@@ -13,6 +13,8 @@ from discord.ext import commands
 import config
 from db.sqlite import fetchOne, fetchAll, execute
 from features.staff.cohost import recordCohosts, selectCohosts
+from runtime import interaction as interactionRuntime
+from runtime import permissions as runtimePermissions
 
 _repoRoot = Path(__file__).resolve().parents[2]
 _defaultCohostLogPath = _repoRoot / "runtime" / "data" / "cohostLogs.csv"
@@ -154,6 +156,15 @@ class CohostCog(commands.Cog):
         self.requests: dict[int, CohostRequest] = {}
         self._finalizeLocks: dict[int, asyncio.Lock] = {}
 
+    @staticmethod
+    def _summarizeException(exc: Exception) -> str:
+        detail = " ".join(str(exc or "").strip().split())
+        if not detail:
+            return exc.__class__.__name__
+        if len(detail) > 220:
+            detail = detail[:217].rstrip() + "..."
+        return f"{exc.__class__.__name__}: {detail}"
+
     async def cog_load(self) -> None:
         self.bot.add_view(CohostView(self))
         await self._restoreOpenRequests()
@@ -182,22 +193,13 @@ class CohostCog(commands.Cog):
             )
             return
 
-        allowedRoles = _cohostAllowedRoleIds()
-        if allowedRoles:
-            member = interaction.user
-            if isinstance(member, discord.Member):
-                if not any(role.id in allowedRoles for role in member.roles):
-                    await interaction.response.send_message(
-                        "You do not have permission to start a cohost request.",
-                        ephemeral=True,
-                    )
-                    return
-            else:
-                await interaction.response.send_message(
-                    "You do not have permission to start a cohost request.",
-                    ephemeral=True,
-                )
-                return
+        member = interaction.user
+        if not isinstance(member, discord.Member) or not runtimePermissions.hasCohostPermission(member):
+            await interaction.response.send_message(
+                "You do not have permission to start a cohost request.",
+                ephemeral=True,
+            )
+            return
 
         await interaction.response.send_message("Creating cohost request...", ephemeral=True)
 
@@ -216,14 +218,14 @@ class CohostCog(commands.Cog):
 
         view = CohostView(self)
         allowedMentions = discord.AllowedMentions(roles=True, users=True)
-        try:
-            message = await interaction.channel.send(
-                content=supervisorMention,
-                embed=embed,
-                view=view,
-                allowed_mentions=allowedMentions,
-            )
-        except (discord.Forbidden, discord.HTTPException):
+        message = await interactionRuntime.safeChannelSend(
+            interaction.channel,
+            content=supervisorMention,
+            embed=embed,
+            view=view,
+            allowed_mentions=allowedMentions,
+        )
+        if message is None:
             return await interaction.followup.send(
                 "I couldn't post the cohost request message in this channel.",
                 ephemeral=True,
@@ -298,10 +300,13 @@ class CohostCog(commands.Cog):
             await interaction.edit_original_response(
                 content="Cohost selection timed out. The request is still open, so you can try Finish again."
             )
-        except Exception:
+        except Exception as exc:
             log.exception("Manual cohost finalize failed for messageId=%d", request.messageId)
             await interaction.edit_original_response(
-                content="I hit an error while finishing this cohost request."
+                content=(
+                    "I hit an error while finishing this cohost request.\n"
+                    f"`{self._summarizeException(exc)}`"
+                )
             )
 
     async def handleJoin(self, interaction: discord.Interaction) -> None:
@@ -417,11 +422,8 @@ class CohostCog(commands.Cog):
     ) -> bool:
         if channel is None:
             return False
-        try:
-            await channel.send(content)
-            return True
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return False
+        sentMessage = await interactionRuntime.safeChannelSend(channel, content=content)
+        return sentMessage is not None
 
     def _formatSelectionMessage(
         self,
@@ -535,16 +537,10 @@ class CohostCog(commands.Cog):
     async def _fetchMessage(self, request: CohostRequest) -> Optional[discord.Message]:
         channel = self.bot.get_channel(request.channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(request.channelId)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, request.channelId)
         if not hasattr(channel, "fetch_message"):
             return None
-        try:
-            return await channel.fetch_message(request.messageId)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return None
+        return await interactionRuntime.safeFetchMessage(channel, request.messageId)
 
     async def _updateMessage(self, request: CohostRequest, message: Optional[discord.Message] = None) -> None:
         message = message or await self._fetchMessage(request)
@@ -583,15 +579,13 @@ class CohostCog(commands.Cog):
         if request.status != "OPEN":
             for child in view.children:
                 child.disabled = True
-        try:
-            await message.edit(
-                content=_resolveSupervisorMention(message.guild),
-                embed=embed,
-                view=view,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return
+        await interactionRuntime.safeMessageEdit(
+            message,
+            content=_resolveSupervisorMention(message.guild),
+            embed=embed,
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
 
 async def setup(bot: commands.Bot):

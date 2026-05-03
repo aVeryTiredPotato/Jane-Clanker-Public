@@ -3,6 +3,7 @@ from typing import Callable, Optional, Protocol, Sequence
 
 import discord
 
+from runtime import interaction as interactionRuntime
 
 _mentionRegex = re.compile(r"<@!?(?P<user_id>\d+)>")
 
@@ -119,16 +120,10 @@ class ClockinEngine:
 
         channel = self.bot.get_channel(channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channelId)
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, channelId)
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return None
-        try:
-            return await channel.fetch_message(messageId)
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            return None
+        return await interactionRuntime.safeFetchMessage(channel, messageId)
 
     async def updateClockinMessage(
         self,
@@ -152,10 +147,7 @@ class ClockinEngine:
         targetMessage = await self._resolveMessageFromSession(session, message=message)
         if targetMessage is None:
             return
-        try:
-            await targetMessage.edit(embed=embed, view=view)
-        except (discord.Forbidden, discord.HTTPException):
-            return
+        await interactionRuntime.safeMessageEdit(targetMessage, embed=embed, view=view)
 
     async def deleteClockinMessage(
         self,
@@ -166,7 +158,4 @@ class ClockinEngine:
         targetMessage = await self._resolveMessageFromSession(session, message=message)
         if targetMessage is None:
             return
-        try:
-            await targetMessage.delete()
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            return
+        await interactionRuntime.safeMessageDelete(targetMessage)

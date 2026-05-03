@@ -8,7 +8,8 @@ from typing import Any, Iterable, Optional
 import discord
 
 import config
-from features.staff.sessions import bgScanPipeline, roblox
+from features.staff.sessions import bgScanPipeline
+from features.staff.sessions.Roblox import robloxInventory, robloxProfiles, robloxUsers
 from runtime import googleOAuth, orgProfiles, taskBudgeter
 
 log = logging.getLogger(__name__)
@@ -161,21 +162,21 @@ async def _progressUpdate(
     )
 
 
-async def _resolveRobloxUserText(lookup: roblox.RoverLookupResult) -> str:
+async def _resolveRobloxUserText(lookup: robloxUsers.RoverLookupResult) -> str:
     username = str(lookup.robloxUsername or "").strip()
     if username:
         return username
     robloxId = _positiveInt(lookup.robloxId)
     if robloxId <= 0:
         return ""
-    profile = await roblox.fetchRobloxUserProfile(robloxId)
+    profile = await robloxProfiles.fetchRobloxUserProfile(robloxId)
     if not profile.error and profile.username:
         return str(profile.username).strip()
     return str(robloxId)
 
 
 async def _inventoryLabel(robloxUserId: int) -> str:
-    result = await roblox.fetchRobloxInventory(int(robloxUserId), maxPages=1)
+    result = await robloxInventory.fetchRobloxInventory(int(robloxUserId), maxPages=1)
     if result.error:
         if bgScanPipeline.isPrivateInventoryStatus(int(result.status or 0), result.error):
             return inventoryLabelPrivate
@@ -212,7 +213,7 @@ async def buildRowsForUserIds(
                 pendingCount=total,
             )
 
-        lookup = await roblox.fetchRobloxUser(int(userId), guildId=guildId or None)
+        lookup = await robloxUsers.fetchRobloxUser(int(userId), guildId=guildId or None)
         if not lookup.robloxId:
             rows.append(
                 BgSpreadsheetRow(

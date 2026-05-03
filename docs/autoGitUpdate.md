@@ -36,6 +36,12 @@ The updater exists so the production bot can pull safe code updates without tram
 - `autoGitUpdatePauseDrainSec`
   Pause drain time before pulling.
 
+- `JANE_INSTALL_REQUIREMENTS_ON_UPDATE`
+  Defaults to on. When a pulled update changes `requirements.txt`, Jane runs `python -m pip install -r requirements.txt` with the same Python executable that is running the bot before she requests the restart.
+
+- `autoGitUpdateDependencyInstallTimeoutSec`
+  Dependency install timeout in seconds. Defaults to 600.
+
 - `autoGitUpdatePreservePaths`
   Extra runtime paths to preserve during pull.
 
@@ -100,8 +106,9 @@ Dirty snapshot or database files should not block the whole pull.
 8. Pull with `git pull --ff-only`.
 9. Reapply `config.py` local values when needed.
 10. Restore preserved runtime paths.
-11. Drop the temporary stash.
-12. Restart Jane if code changed.
+11. If `requirements.txt` changed, run pip install against the updated requirements file.
+12. Drop the temporary stash.
+13. Restart Jane if code changed.
 
 ## Manual Restart Flow
 

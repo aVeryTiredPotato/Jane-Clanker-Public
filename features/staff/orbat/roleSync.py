@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any, Optional
 
@@ -8,7 +8,7 @@ import config
 from features.staff.departmentOrbat import sheets as departmentOrbatSheets
 from features.staff.recruitment import sheets as recruitmentSheets
 from runtime import taskBudgeter
-from features.staff.sessions import roblox
+from features.staff.sessions.Roblox import robloxUsers
 
 
 def _asInt(value: Any, default: int = 0) -> int:
@@ -86,7 +86,7 @@ async def _syncAnrorsPlacement(
             "syncType": "recruitment.anrorsPlacement",
         }
 
-    roverResult = await roblox.fetchRobloxUser(member.id, guildId)
+    roverResult = await robloxUsers.fetchRobloxUser(member.id, guildId)
     robloxUsername = str(roverResult.robloxUsername or "").strip()
     if not robloxUsername:
         return {
@@ -95,7 +95,7 @@ async def _syncAnrorsPlacement(
             "reason": str(roverResult.error or "missing-roblox-username"),
         }
 
-    sheetResult = await taskBudgeter.runSheetsThread(
+    sheetResult = await taskBudgeter.runBackgroundSheetsThread(
         recruitmentSheets.syncRecruitmentRolePlacement,
         robloxUsername,
         hasMemberRole,
@@ -162,7 +162,7 @@ async def _syncDepartmentRankByRole(
             "divisionKey": divisionKey,
         }
 
-    roverResult = await roblox.fetchRobloxUser(member.id, guildId)
+    roverResult = await robloxUsers.fetchRobloxUser(member.id, guildId)
     robloxUsername = str(roverResult.robloxUsername or "").strip()
     if not robloxUsername:
         return {
@@ -185,7 +185,7 @@ async def _syncDepartmentRankByRole(
     fundingRoleId = _asInt(mapping.get("fundingRoleId"), 0)
     hasFundingRole = _memberHasRoleId(member, fundingRoleId)
 
-    sheetResult = await taskBudgeter.runSheetsThread(
+    sheetResult = await taskBudgeter.runBackgroundSheetsThread(
         departmentOrbatSheets.syncDivisionMemberRankByRobloxUsername,
         divisionKey,
         robloxUsername,

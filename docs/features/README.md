@@ -11,6 +11,7 @@ If you want more specific "what does this actual file do?" docs, check:
 
 - [Sessions And BG Checks](sessions.md)
 - [BG Intelligence](bgIntelligence.md)
+- [Honor Guard](honorGuard.md)
 - [Server Recovery](serverRecovery.md)
 - [Training Log Mirror](trainingLogMirror.md)
 - [Best Of](bestOf.md)
@@ -51,6 +52,7 @@ Look under:
 - applications
 - workflows
 - ribbons
+- honor guard
 - ORBAT
 - recruitment
 - cohost

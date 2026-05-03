@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import discord
 from features.staff.sessions import bgBuckets
+from runtime import interaction as interactionRuntime
 from runtime import orgProfiles
 
 _deps: dict[str, Any] = {}
@@ -55,16 +56,14 @@ async def _sendQueueStartupAlert(
 ) -> None:
     if int(reviewRoleId) <= 0:
         return
-    try:
-        await channel.send(
-            content=(
-                f"<@&{int(reviewRoleId)}>\n"
-                f"Background-check queue startup: `{int(attendeeCount)}` attendee(s) waiting."
-            ),
-            allowed_mentions=discord.AllowedMentions(roles=True),
-        )
-    except (discord.Forbidden, discord.HTTPException):
-        return
+    await interactionRuntime.safeChannelSend(
+        channel,
+        content=(
+            f"<@&{int(reviewRoleId)}>\n"
+            f"Background-check queue startup: `{int(attendeeCount)}` attendee(s) waiting."
+        ),
+        allowed_mentions=discord.AllowedMentions(roles=True),
+    )
 
 
 async def _recoverMissingQueueMessage(
@@ -169,10 +168,10 @@ async def fetchBgQueueMessageForSession(
         channel = await _dep("getCachedChannel")(bot, channelId)
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             continue
-        try:
-            message = await channel.fetch_message(targetMessageId)
+        message = await interactionRuntime.safeFetchMessage(channel, targetMessageId)
+        if message is not None:
             return channel, message
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        else:
             continue
     return None, None
 
@@ -255,8 +254,9 @@ async def postBgFinalSummary(bot: discord.Client, sessionId: int) -> None:
             continue
         try:
             if len(summary) <= 1900:
-                await targetChannel.send(
-                    summary,
+                await interactionRuntime.safeChannelSend(
+                    targetChannel,
+                    content=summary,
                     allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
                 )
             else:
@@ -265,7 +265,8 @@ async def postBgFinalSummary(bot: discord.Client, sessionId: int) -> None:
                     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".txt", delete=False) as handle:
                         handle.write(summary)
                         tempPath = handle.name
-                    await targetChannel.send(
+                    await interactionRuntime.safeChannelSend(
+                        targetChannel,
                         content=(
                             "### BG Check Final Results\n"
                             f"Session `{int(sessionId)}` summary is attached."
@@ -312,10 +313,7 @@ async def closeBgQueueControls(
             view = _dep("bgQueueViewClass")(sessionId, reviewBucket=bucket)
             for child in view.children:
                 child.disabled = True
-            try:
-                await queueMessage.edit(view=view)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
+            await interactionRuntime.safeMessageEdit(queueMessage, view=view)
 
     if reviewBucket is None:
         _dep("clearBgClaimsForSession")(sessionId)
@@ -379,18 +377,14 @@ async def repostBgQueueMessage(
             reviewBucket=bucket,
         )
 
-        try:
-            newMessage = await channel.send(embed=embed, view=view)
-        except (discord.Forbidden, discord.HTTPException):
+        newMessage = await interactionRuntime.safeChannelSend(channel, embed=embed, view=view)
+        if newMessage is None:
             continue
 
         await _dep("service").setBgQueueMessage(sessionId, int(newMessage.id), reviewBucket=bucket)
         _, oldMessage = await fetchBgQueueMessageForSession(bot, session, int(oldMessageId), bucket)
         if oldMessage is not None:
-            try:
-                await oldMessage.delete()
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
+            await interactionRuntime.safeMessageDelete(oldMessage)
         anySucceeded = True
     return anySucceeded
 
@@ -429,9 +423,7 @@ async def updateBgQueueMessage(bot: discord.Client, sessionId: int) -> None:
             bucketAttendees,
             reviewBucket=reviewBucket,
         )
-        try:
-            await msg.edit(embed=embed, view=view)
-        except discord.NotFound:
+        if not await interactionRuntime.safeMessageEdit(msg, embed=embed, view=view):
             await _recoverMissingQueueMessage(
                 bot,
                 sessionId,
@@ -439,8 +431,6 @@ async def updateBgQueueMessage(bot: discord.Client, sessionId: int) -> None:
                 attendees=bucketAttendees,
                 reviewBucket=reviewBucket,
             )
-        except (discord.Forbidden, discord.HTTPException):
-            continue
 
 
 async def postBgQueue(bot: discord.Client, sessionId: int, guild: discord.Guild) -> None:
@@ -474,10 +464,9 @@ async def postBgQueue(bot: discord.Client, sessionId: int, guild: discord.Guild)
                 reviewRoleId=reviewRoleIdInt,
                 attendeeCount=len(bucketAttendees),
             )
-            msg = await channel.send(
-                embed=embed,
-                view=view,
-            )
+            msg = await interactionRuntime.safeChannelSend(channel, embed=embed, view=view)
+            if msg is None:
+                continue
         except (discord.Forbidden, discord.HTTPException):
             continue
 

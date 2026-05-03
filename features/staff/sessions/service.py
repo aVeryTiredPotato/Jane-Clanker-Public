@@ -1,8 +1,9 @@
 import hashlib
 import json
 from typing import Optional, List, Dict
-from db.sqlite import fetchOne, fetchAll, execute, executeReturnId, executeMany
+from db.sqlite import fetchOne, fetchAll, execute, executeReturnId, executeMany, runWriteTransaction
 from features.staff.sessions.bgBuckets import adultBgReviewBucket, minorBgReviewBucket, normalizeBgReviewBucket
+from features.staff.sessions.Roblox import roverIdentity
 
 
 def _jsonArray(value) -> str:
@@ -17,12 +18,47 @@ def hashPassword(password: str) -> str:
     # simple SHA256; good enough for this use
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-async def createSession(guildId: int, channelId: int, messageId: int, sessionType: str, hostId: int, password: str, maxAttendeeLimit: int) -> int:
+
+async def _rememberRobloxIdentityFromScan(
+    userId: int,
+    robloxUserId: Optional[int],
+    robloxUsername: Optional[str],
+    *,
+    source: str,
+) -> None:
+    if int(userId or 0) <= 0 or not str(robloxUsername or "").strip():
+        return
+    await roverIdentity.rememberKnownRobloxIdentity(
+        int(userId),
+        str(robloxUsername or "").strip(),
+        robloxId=robloxUserId,
+        source=source,
+        confidence=90 if robloxUserId else 75,
+    )
+
+async def createSession(
+    guildId: int,
+    channelId: int,
+    messageId: int,
+    sessionType: str,
+    hostId: int,
+    password: str,
+    maxAttendeeLimit: int = 30,
+) -> int:
     passwordHash = hashPassword(password)
+    normalizedMaxAttendeeLimit = max(1, int(maxAttendeeLimit or 30))
     sessionId = await executeReturnId(
         """INSERT INTO sessions (guildId, channelId, messageId, sessionType, hostId, passwordHash, maxAttendeeLimit, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')""",
-        (guildId, channelId, messageId, sessionType, hostId, passwordHash, maxAttendeeLimit)
+        (
+            guildId,
+            channelId,
+            messageId,
+            sessionType,
+            hostId,
+            passwordHash,
+            normalizedMaxAttendeeLimit,
+        )
     )
     return sessionId
 
@@ -136,6 +172,16 @@ async def getAttendees(sessionId: int) -> List[Dict]:
         (sessionId,)
     )
 
+async def getAttendeeCount(sessionId: int) -> int:
+    row = await fetchOne(
+        "SELECT COUNT(*) AS attendeeCount FROM attendees WHERE sessionId = ?",
+        (int(sessionId),),
+    )
+    try:
+        return int((row or {}).get("attendeeCount") or 0)
+    except (TypeError, ValueError):
+        return 0
+
 async def getAttendee(sessionId: int, userId: int) -> Optional[Dict]:
     return await fetchOne(
         "SELECT * FROM attendees WHERE sessionId = ? AND userId = ?",
@@ -147,6 +193,91 @@ async def addAttendee(sessionId: int, userId: int):
         "INSERT OR IGNORE INTO attendees (sessionId, userId) VALUES (?, ?)",
         (sessionId, userId)
     )
+
+
+async def attemptClockIn(sessionId: int, userId: int, password: str) -> Dict:
+    normalizedSessionId = int(sessionId)
+    normalizedUserId = int(userId)
+    passwordHash = hashPassword(password)
+
+    async def _tx(db) -> Dict:
+        async with db.execute(
+            "SELECT * FROM sessions WHERE sessionId = ?",
+            (normalizedSessionId,),
+        ) as cur:
+            sessionRow = await cur.fetchone()
+        if sessionRow is None:
+            return {"status": "SESSION_NOT_FOUND"}
+
+        session = dict(sessionRow)
+        sessionStatus = str(session.get("status") or "").upper()
+        maxAttendeeLimit = max(1, int(session.get("maxAttendeeLimit") or 30))
+
+        async with db.execute(
+            "SELECT COUNT(*) AS attendeeCount FROM attendees WHERE sessionId = ?",
+            (normalizedSessionId,),
+        ) as cur:
+            countRow = await cur.fetchone()
+        attendeeCount = int((countRow[0] if countRow is not None else 0) or 0)
+
+        if sessionStatus != "OPEN":
+            return {
+                "status": "SESSION_CLOSED",
+                "sessionStatus": sessionStatus,
+                "attendeeCount": attendeeCount,
+                "maxAttendeeLimit": maxAttendeeLimit,
+            }
+
+        async with db.execute(
+            "SELECT 1 FROM attendees WHERE sessionId = ? AND userId = ?",
+            (normalizedSessionId, normalizedUserId),
+        ) as cur:
+            existing = await cur.fetchone()
+        if existing is not None:
+            return {
+                "status": "ALREADY_JOINED",
+                "attendeeCount": attendeeCount,
+                "maxAttendeeLimit": maxAttendeeLimit,
+            }
+
+        if str(session.get("passwordHash") or "") != passwordHash:
+            return {
+                "status": "BAD_PASSWORD",
+                "attendeeCount": attendeeCount,
+                "maxAttendeeLimit": maxAttendeeLimit,
+            }
+
+        if attendeeCount >= maxAttendeeLimit:
+            await db.execute(
+                "UPDATE sessions SET status = 'FULL' WHERE sessionId = ? AND status = 'OPEN'",
+                (normalizedSessionId,),
+            )
+            return {
+                "status": "FULL",
+                "attendeeCount": attendeeCount,
+                "maxAttendeeLimit": maxAttendeeLimit,
+            }
+
+        await db.execute(
+            "INSERT INTO attendees (sessionId, userId) VALUES (?, ?)",
+            (normalizedSessionId, normalizedUserId),
+        )
+        attendeeCount += 1
+        reachedLimit = attendeeCount >= maxAttendeeLimit
+        if reachedLimit:
+            await db.execute(
+                "UPDATE sessions SET status = 'FULL' WHERE sessionId = ? AND status = 'OPEN'",
+                (normalizedSessionId,),
+            )
+
+        return {
+            "status": "ADDED",
+            "attendeeCount": attendeeCount,
+            "maxAttendeeLimit": maxAttendeeLimit,
+            "reachedLimit": reachedLimit,
+        }
+
+    return await runWriteTransaction(_tx)
 
 
 async def addAttendeesBulk(
@@ -435,6 +566,12 @@ async def setRobloxGroupScan(
             userId,
         ),
     )
+    await _rememberRobloxIdentityFromScan(
+        userId,
+        robloxUserId,
+        robloxUsername,
+        source="session-group-scan",
+    )
 
 async def setRobloxInventoryScan(
     sessionId: int,
@@ -461,6 +598,12 @@ async def setRobloxInventoryScan(
         """,
         (itemsJson, flaggedJson, status, error, flagged, robloxUserId, robloxUsername, sessionId, userId),
     )
+    await _rememberRobloxIdentityFromScan(
+        userId,
+        robloxUserId,
+        robloxUsername,
+        source="session-inventory-scan",
+    )
 
 async def setRobloxBadgeScan(
     sessionId: int,
@@ -485,6 +628,12 @@ async def setRobloxBadgeScan(
         """,
         (flaggedJson, status, error, flagged, robloxUserId, robloxUsername, sessionId, userId),
     )
+    await _rememberRobloxIdentityFromScan(
+        userId,
+        robloxUserId,
+        robloxUsername,
+        source="session-badge-scan",
+    )
 
 async def setRobloxOutfitScan(
     sessionId: int,
@@ -506,4 +655,10 @@ async def setRobloxOutfitScan(
         WHERE sessionId = ? AND userId = ?
         """,
         (outfitsJson, status, error, robloxUserId, robloxUsername, sessionId, userId),
+    )
+    await _rememberRobloxIdentityFromScan(
+        userId,
+        robloxUserId,
+        robloxUsername,
+        source="session-outfit-scan",
     )

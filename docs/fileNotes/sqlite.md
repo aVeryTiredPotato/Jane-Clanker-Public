@@ -78,7 +78,7 @@ These back orientation sessions, certification sessions, BG queue routing, BG re
 - `points`
 - `points_pending`
 
-`points_pending` is used when a review action credits points that should be processed later.
+`points_pending` is used when a review action credits points that should be processed later. Recruitment review approvals queue points here, then the recruitment payout maintenance path moves them into `points`. That payout is manual-only unless `automaticRecruitmentPayoutEnabled` is explicitly enabled in config.
 
 ### Recruitment / ANRORS Logging
 
@@ -87,9 +87,11 @@ These back orientation sessions, certification sessions, BG queue routing, BG re
 - `recruitment_patrol_sessions`
 - `recruitment_patrol_attendees`
 
-These are the ANRORS recruitment logging tables. Standard recruitment review messages use `config.recruitmentChannelId`, solo time-log review messages use `config.recruitmentTimeLogReviewChannelId`, group patrol review messages use `config.recruitmentPatrolReviewChannelId`, and group patrol screenshot collection uses `config.recruitmentPatrolEvidenceChannelId`. Each stored row keeps its own `guildId`, `channelId`, and `messageId`.
+These are the ANRORS recruitment logging tables. Standard recruitment review messages use `config.recruitmentChannelId`, solo time-log review messages use `config.recruitmentTimeLogReviewChannelId`, group patrol review messages use `config.recruitmentPatrolReviewChannelId`, and group patrol screenshot collection uses `config.recruitmentPatrolEvidenceChannelId`.
 
-That matters during a recruitment logging server/channel move: future submissions follow config, while old rows still point to their original review messages. Orientation and BG review channel config are separate unless that infrastructure is intentionally moving too.
+For new recruitment and patrol submissions, `channelId` and `messageId` should end up pointing at the review message Jane posted, not just the channel where the slash command was used. The row is created before the review message exists, then the recruitment service updates the stored message location after posting.
+
+That matters during a recruitment logging server/channel move: future submissions follow config, while old rows still point to their original review messages. A few older rows may still point at the submitter's channel from before that handoff was cleaned up, so lookup code should be a little forgiving. Orientation and BG review channel config are separate unless that infrastructure is intentionally moving too.
 
 ### ORBAT / LOA
 

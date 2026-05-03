@@ -39,6 +39,7 @@ Important assumptions:
 - `_loadHeaderMap(...)` combines configured row-model columns with headers found in the first 10 rows
 - missing required headers raise `RuntimeError`
 - rank labels, quota thresholds, section headers, and promotion thresholds come from `config.py`
+- formula-aware reads matter here. The sheet facade must pass options like `valueRenderOption="FORMULA"` through to Google Sheets so Jane does not overwrite all-time formulas.
 
 Required header keys are:
 
@@ -97,6 +98,17 @@ Important behavior:
 - promotion checks use all-time points
 
 `applyApprovedLogsBatch(...)` also treats `hostedPatrolDelta` differently for RM+ rows.
+
+The usual approval deltas are:
+
+- recruitment log approval: recruiter gets points only
+- solo patrol approval: recruiter gets points, attended patrol +1, and hosted patrol +1
+- group patrol approval: attendees get points and attended patrol +1
+- group patrol host: gets hosted patrol +1 even if they are not in the attendee list
+
+The sheet writer decides whether attended or hosted patrols count for the visible patrol quota based on the row's current rank. RM+ rows use hosted patrols. Regular recruiter rows use attended patrols.
+
+Patrol duration validation happens before this file, mostly in `cogs/staff/recruitmentCog.py`. The current cap is `config.recruitmentPatrolMaxDurationMinutes`.
 
 ## Things To Be Careful About
 

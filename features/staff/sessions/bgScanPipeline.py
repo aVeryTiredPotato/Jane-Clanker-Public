@@ -5,8 +5,16 @@ from datetime import datetime
 from typing import Awaitable, Callable, Optional
 
 import config
-from features.staff.sessions import bgBuckets
-from features.staff.sessions import roblox, service
+from features.staff.bgflags import service as flagService
+from features.staff.sessions import bgBuckets, service
+from features.staff.sessions.Roblox import (
+    robloxBadges,
+    robloxGroups,
+    robloxInventory,
+    robloxOutfits,
+    robloxProfiles,
+    robloxUsers,
+)
 
 FlagRules = tuple[
     set[int],
@@ -44,7 +52,7 @@ async def resolveRobloxIdentity(attendee: dict) -> RobloxIdentity:
     if robloxUserId:
         return RobloxIdentity(robloxUserId, robloxUsername)
 
-    lookup = await roblox.fetchRobloxUser(attendee["userId"])
+    lookup = await robloxUsers.fetchRobloxUser(attendee["userId"])
     return RobloxIdentity(
         lookup.robloxId,
         lookup.robloxUsername or robloxUsername,
@@ -90,7 +98,7 @@ async def scanRobloxGroupsForAttendee(
     matches: list[dict] = []
 
     if accountAgeDays > 0:
-        profile = await roblox.fetchRobloxUserProfile(robloxUserId)
+        profile = await robloxProfiles.fetchRobloxUserProfile(robloxUserId)
         if profile.created:
             createdRaw = profile.created.replace("Z", "+00:00")
             try:
@@ -111,7 +119,7 @@ async def scanRobloxGroupsForAttendee(
     groups: list[dict] = []
     flaggedGroups: list[dict] = []
     if flagIds or flagUsernames or groupKeywords:
-        result = await roblox.fetchRobloxGroups(robloxUserId)
+        result = await robloxGroups.fetchRobloxGroups(robloxUserId)
         if result.error:
             await service.setRobloxGroupScan(
                 sessionId,
@@ -243,11 +251,15 @@ async def scanRobloxInventoryForAttendee(
         return True
 
     maxPages = int(getattr(config, "robloxInventoryScanMaxPages", 5))
-    result = await roblox.fetchRobloxInventory(
+    visualReferenceHashes = await flagService.getValidatedItemVisualHashes(
+        ensureSynced=True,
+    )
+    result = await robloxInventory.fetchRobloxInventory(
         robloxUserId,
         flagItemIds,
         targetCreatorIds=flagCreatorIds,
         targetKeywords=itemKeywords,
+        visualReferenceHashes=visualReferenceHashes,
         maxPages=maxPages,
     )
     if result.error:
@@ -313,7 +325,7 @@ async def scanRobloxBadgesForAttendee(
         return True
 
     batchSize = int(getattr(config, "robloxBadgeScanBatchSize", 50))
-    result = await roblox.fetchRobloxBadgeAwards(robloxUserId, flagBadgeIds, batchSize=batchSize)
+    result = await robloxBadges.fetchRobloxBadgeAwards(robloxUserId, flagBadgeIds, batchSize=batchSize)
     if result.error:
         await service.setRobloxBadgeScan(
             sessionId,
@@ -387,7 +399,7 @@ async def scanRobloxOutfitsForAttendee(
 
     maxOutfits = int(getattr(config, "robloxOutfitMax", 0) or 0)
     maxPages = int(getattr(config, "robloxOutfitMaxPages", 20) or 20)
-    result = await roblox.fetchRobloxUserOutfits(
+    result = await robloxOutfits.fetchRobloxUserOutfits(
         robloxUserId,
         maxOutfits=maxOutfits,
         editableOnly=False,

@@ -44,7 +44,7 @@ The normal happy path looks like this:
 10. Jane posts BG queues for passing attendees.
 11. If all needed BG queues post successfully, Jane posts orientation results, marks the session `FINISHED`, and deletes the live session message.
 
-THIS IS SUBJECT TO CHANGE, AS THE ABOVE PORTION IS CURRENTLY BEING WORKED ON 4/13/26
+This flow is live, but treat `Finish` carefully. It posts queues, posts results, changes session state, and kicks off follow-up work.
 
 ## BG Queue Flow
 
@@ -96,6 +96,8 @@ When a reviewer approves a candidate:
 6. Jane may attempt Roblox group auto-accept.
 7. Jane may DM the user with Roblox join instructions if auto-accept cannot complete.
 8. Jane may apply recruitment orientation bonus work.
+
+The recruitment bonus path is intentionally idempotent. It only touches recruitment logs that still have `passedOrientation = 0`, updates the review embed when it can find it, and syncs the extra points to the Recruitment ORBAT if the original recruitment log was already approved.
 
 ## What Rejection Does
 
@@ -169,6 +171,9 @@ Check these first when sessions or BG queues start acting haunted:
 - `bgReviewModeratorRoleId`
 - `moderatorRoleId`
 - `trainingResultsChannelId`
+- `recruitmentAutoDetectOrientation`
+- `recruitmentPointsOrientationBonus`
+- `recruitmentChannelId`
 - `robloxGroupId`
 - `robloxOpenCloudApiKey`
 - `roverApiKey`
@@ -195,6 +200,9 @@ Check these first when sessions or BG queues start acting haunted:
 
 - Roblox auto-accept fails.
   Check RoVer lookup, Open Cloud config, group ID, and whether the user actually requested to join the group.
+
+- Recruitment orientation bonuses do not show up.
+  Check `recruitmentAutoDetectOrientation`, the bonus point value, the recruitment review message location, RoVer lookup, and Recruitment ORBAT sheet logs.
 
 ## Safe Edit Rules
 

@@ -128,23 +128,27 @@ class RecruitmentReviewView(discord.ui.View):
             threadId=threadId,
         )
 
-    async def _queueApprovalPoints(self, submission: dict) -> None:
+    async def _queueApprovalPoints(self, submission: dict) -> list[dict]:
         points = int(submission.get("points") or 0)
         if points <= 0:
-            return
+            return []
+
+        sheetResults: list[dict] = []
 
         if self.submissionType == "recruitment":
             submitterId = int(submission["submitterId"])
             await recruitmentService.queuePointsBatch(
                 [(submitterId, points, "recruitment", self.submissionId)]
             )
-            await self._syncRecruitmentSheet(
-                [submitterId],
-                points,
-                patrolDelta=0,
-                hostedPatrolDelta=0,
+            sheetResults.append(
+                await self._syncRecruitmentSheet(
+                    [submitterId],
+                    points,
+                    patrolDelta=0,
+                    hostedPatrolDelta=0,
+                )
             )
-            return
+            return sheetResults
 
         patrolType = str(submission.get("patrolType") or "solo").strip().lower()
         if patrolType == "group":
@@ -159,33 +163,40 @@ class RecruitmentReviewView(discord.ui.View):
                 # Non-RM+ users count attended patrols; RM+ users count hosted patrols.
                 # We always write the attended delta here and let sheet rank logic decide
                 # whether to use attended or hosted.
-                await self._syncRecruitmentSheet(
-                    participantIds,
-                    points,
-                    patrolDelta=1,
-                    hostedPatrolDelta=0,
+                sheetResults.append(
+                    await self._syncRecruitmentSheet(
+                        participantIds,
+                        points,
+                        patrolDelta=1,
+                        hostedPatrolDelta=0,
+                    )
                 )
 
                 # Host gets a hosted patrol increment even when not in attendee list.
                 submitterId = int(submission["submitterId"])
-                await self._syncRecruitmentSheet(
-                    [submitterId],
-                    pointsDelta=0,
-                    patrolDelta=0,
-                    hostedPatrolDelta=1,
+                sheetResults.append(
+                    await self._syncRecruitmentSheet(
+                        [submitterId],
+                        pointsDelta=0,
+                        patrolDelta=0,
+                        hostedPatrolDelta=1,
+                    )
                 )
-                return
+                return sheetResults
 
         submitterId = int(submission["submitterId"])
         await recruitmentService.queuePointsBatch(
             [(submitterId, points, "recruitment-patrol-solo", self.submissionId)]
         )
-        await self._syncRecruitmentSheet(
-            [submitterId],
-            points,
-            patrolDelta=0,
-            hostedPatrolDelta=0,
+        sheetResults.append(
+            await self._syncRecruitmentSheet(
+                [submitterId],
+                points,
+                patrolDelta=1,
+                hostedPatrolDelta=1,
+            )
         )
+        return sheetResults
 
     async def _logRecruitmentSheetChange(
         self,
@@ -207,14 +218,52 @@ class RecruitmentReviewView(discord.ui.View):
         pointsDelta: int,
         patrolDelta: int,
         hostedPatrolDelta: int = 0,
-    ) -> None:
-        await recruitmentOutputs.syncApprovedLogsToSheet(
+    ) -> dict:
+        return await recruitmentOutputs.syncApprovedLogsToSheet(
             discordUserIds,
             pointsDelta,
             patrolDelta,
             hostedPatrolDelta,
             organizeAfter=True,
+            botClient=self.cog.bot,
         )
+
+    @staticmethod
+    def _sheetSyncWarning(sheetResults: Sequence[dict]) -> str:
+        if not sheetResults:
+            return ""
+        skipped: list[str] = []
+        errored = False
+        unresolvedUsers: list[int] = []
+        for result in sheetResults:
+            if not isinstance(result, dict):
+                continue
+            if result.get("error"):
+                errored = True
+            if result.get("skipped"):
+                skipped.append(str(result.get("skipped")))
+            for userId in result.get("unresolvedUsers", []) or []:
+                try:
+                    parsed = int(userId)
+                except (TypeError, ValueError):
+                    continue
+                if parsed > 0 and parsed not in unresolvedUsers:
+                    unresolvedUsers.append(parsed)
+        if errored:
+            return " Recruitment ORBAT sync failed; check logs."
+        if "partial-no-roblox-usernames" in skipped:
+            mentions = ", ".join(f"<@{userId}>" for userId in unresolvedUsers[:5])
+            if mentions:
+                return f" Recruitment ORBAT was partially updated; no Roblox username could be resolved for {mentions}."
+            return " Recruitment ORBAT was partially updated; at least one Roblox username could not be resolved."
+        if "no-roblox-usernames" in skipped:
+            mentions = ", ".join(f"<@{userId}>" for userId in unresolvedUsers[:5])
+            if mentions:
+                return f" Recruitment ORBAT was not updated because no Roblox username could be resolved for {mentions}."
+            return " Recruitment ORBAT was not updated because no Roblox username could be resolved."
+        if skipped:
+            return f" Recruitment ORBAT sync skipped ({', '.join(sorted(set(skipped)))})."
+        return ""
 
     async def _buildSubmissionEmbed(self) -> Optional[discord.Embed]:
         submission = await self._getSubmission()
@@ -283,7 +332,7 @@ class RecruitmentReviewView(discord.ui.View):
             _setAllButtonsDisabled(self, True)
             if isinstance(interaction.message, discord.Message):
                 try:
-                    await interaction.message.edit(view=self)
+                    await interactionRuntime.safeMessageEdit(interaction.message, view=self)
                 except (discord.Forbidden, discord.HTTPException):
                     pass
 
@@ -296,9 +345,10 @@ class RecruitmentReviewView(discord.ui.View):
                 )
 
                 if status == "APPROVED":
+                    sheetResults: list[dict] = []
                     submission = await self._getSubmission()
                     if submission:
-                        await self._queueApprovalPoints(submission)
+                        sheetResults = await self._queueApprovalPoints(submission)
                         points = int(submission.get("points") or 0)
                         patrolType = str(submission.get("patrolType") or "solo").strip().lower()
                         if self.submissionType == "recruitment":
@@ -341,14 +391,15 @@ class RecruitmentReviewView(discord.ui.View):
                     embed = await self._buildSubmissionEmbed()
                     try:
                         if embed:
-                            await interaction.message.edit(embed=embed, view=self)
+                            await interactionRuntime.safeMessageEdit(interaction.message, embed=embed, view=self)
                         else:
-                            await interaction.message.edit(view=self)
+                            await interactionRuntime.safeMessageEdit(interaction.message, view=self)
                     except (discord.Forbidden, discord.HTTPException):
                         pass
 
                 if status == "APPROVED":
-                    await _safeInteractionReply(interaction, "Submission approved.", ephemeral=True)
+                    warning = self._sheetSyncWarning(sheetResults)
+                    await _safeInteractionReply(interaction, f"Submission approved.{warning}", ephemeral=True)
                 elif status == "REJECTED":
                     await _safeInteractionReply(interaction, "Submission rejected.", ephemeral=True)
                 else:
@@ -362,7 +413,7 @@ class RecruitmentReviewView(discord.ui.View):
                     child.disabled = previousState[idx] if idx < len(previousState) else False
                 if isinstance(interaction.message, discord.Message):
                     try:
-                        await interaction.message.edit(view=self)
+                        await interactionRuntime.safeMessageEdit(interaction.message, view=self)
                     except (discord.Forbidden, discord.HTTPException):
                         pass
                 log.exception("Failed to process recruitment review decision.")

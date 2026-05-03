@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 import discord
 
+from runtime import interaction as interactionRuntime
+
 
 @dataclass(slots=True)
 class BgQueueProgressReporter:
@@ -54,15 +56,13 @@ class BgQueueProgressReporter:
         return embed
 
     async def start(self, detail: str) -> None:
-        try:
-            self.message = await self.channel.send(
-                embed=self._buildEmbed(
-                    stepIndex=1,
-                    detail=detail,
-                )
+        self.message = await interactionRuntime.safeChannelSend(
+            self.channel,
+            embed=self._buildEmbed(
+                stepIndex=1,
+                detail=detail,
             )
-        except Exception:
-            self.message = None
+        )
 
     async def update(
         self,
@@ -75,18 +75,16 @@ class BgQueueProgressReporter:
     ) -> None:
         if self.message is None:
             return
-        try:
-            await self.message.edit(
-                embed=self._buildEmbed(
-                    stepIndex=stepIndex,
-                    detail=detail,
-                    pendingCount=pendingCount,
-                    finished=finished,
-                    failed=failed,
-                )
+        await interactionRuntime.safeMessageEdit(
+            self.message,
+            embed=self._buildEmbed(
+                stepIndex=stepIndex,
+                detail=detail,
+                pendingCount=pendingCount,
+                finished=finished,
+                failed=failed,
             )
-        except Exception:
-            return
+        )
 
 
 async def resolveBgQueueChannel(
@@ -101,7 +99,7 @@ async def resolveBgQueueChannel(
     if channelId:
         try:
             channelIdInt = int(channelId)
-            channel = botClient.get_channel(channelIdInt) or await botClient.fetch_channel(channelIdInt)
+            channel = botClient.get_channel(channelIdInt) or await interactionRuntime.safeFetchChannel(botClient, channelIdInt)
             if isinstance(channel, (discord.TextChannel, discord.Thread)):
                 return channel
         except (TypeError, ValueError, discord.NotFound, discord.Forbidden, discord.HTTPException):

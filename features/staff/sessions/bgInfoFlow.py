@@ -7,6 +7,7 @@ from discord import ui
 
 from features.staff.sessions import bgBuckets
 from features.staff.sessions.favoriteGamesView import FavoriteGamesPageView
+from runtime import taskBudgeter
 
 
 class BgInfoActionsView(ui.View):
@@ -25,6 +26,7 @@ class BgInfoActionsView(ui.View):
         safeInteractionReply: Callable[..., Awaitable[bool]],
         safeInteractionDefer: Callable[..., Awaitable[bool]],
         requireModPermission: Callable[[discord.Interaction], Awaitable[bool]],
+        robloxGamesModule: Any = None,
     ):
         super().__init__(timeout=300)
         self.sessionId = int(sessionId)
@@ -35,7 +37,8 @@ class BgInfoActionsView(ui.View):
         self.reviewBucket = bgBuckets.normalizeBgReviewBucket(reviewBucket)
         self.config = configModule
         self.service = serviceModule
-        self.roblox = robloxModule
+        self.robloxUsers = robloxModule
+        self.robloxGames = robloxGamesModule or robloxModule
         self.safeInteractionReply = safeInteractionReply
         self.safeInteractionDefer = safeInteractionDefer
         self.requireModPermission = requireModPermission
@@ -92,7 +95,7 @@ class BgInfoActionsView(ui.View):
                     robloxUsername = attendeeRobloxUsername
 
         if not robloxUserId:
-            lookup = await self.roblox.fetchRobloxUser(
+            lookup = await self.robloxUsers.fetchRobloxUser(
                 self.targetUserId,
                 guildId=lookupGuildId or None,
             )
@@ -111,10 +114,10 @@ class BgInfoActionsView(ui.View):
 
         pageSize = max(1, min(20, int(getattr(self.config, "robloxFavoriteGamesMax", 12) or 12)))
         fetchLimit = max(pageSize, min(100, int(getattr(self.config, "robloxFavoriteGamesFetchMax", 100) or 100)))
-        result = await self.roblox.fetchRobloxFavoriteGames(robloxUserId, maxGames=fetchLimit)
+        result = await self.robloxGames.fetchRobloxFavoriteGames(robloxUserId, maxGames=fetchLimit)
         if result.error and result.status == 400:
             # Retry once with a fresh RoVer lookup in case the stored Roblox ID is stale.
-            lookup = await self.roblox.fetchRobloxUser(
+            lookup = await self.robloxUsers.fetchRobloxUser(
                 self.targetUserId,
                 guildId=lookupGuildId or None,
             )
@@ -122,7 +125,7 @@ class BgInfoActionsView(ui.View):
                 robloxUserId = int(lookup.robloxId)
                 if lookup.robloxUsername:
                     robloxUsername = lookup.robloxUsername
-                result = await self.roblox.fetchRobloxFavoriteGames(robloxUserId, maxGames=fetchLimit)
+                result = await self.robloxGames.fetchRobloxFavoriteGames(robloxUserId, maxGames=fetchLimit)
 
         if result.error:
             await self.safeInteractionReply(
@@ -204,7 +207,7 @@ async def sendBgInfoForTarget(
     member = guild.get_member(targetUserId) if guild else None
     if member is None and guild is not None:
         try:
-            member = await guild.fetch_member(targetUserId)
+            member = await taskBudgeter.runDiscord(lambda: guild.fetch_member(targetUserId))
         except discord.NotFound:
             member = None
 
@@ -370,22 +373,48 @@ async def sendBgInfoForTarget(
                 continue
             itemId = item.get("id")
             itemName = item.get("name")
+            itemType = str(item.get("itemType") or "").strip()
             creatorId = item.get("creatorId")
             creatorName = item.get("creatorName")
-            matchType = item.get("matchType")
+            matchType = str(item.get("matchType") or "").strip().lower()
+            matchMode = str(item.get("matchMode") or "").strip().lower()
             creatorText = ""
             if creatorName or creatorId:
                 creatorLabel = creatorName or "creator"
                 creatorText = f" by {creatorLabel} [{creatorId}]" if creatorId else f" by {creatorLabel}"
+            detailParts: list[str] = []
+            if itemType:
+                detailParts.append(itemType)
+            if matchType == "creator":
+                detailParts.append("flagged creator")
+            elif matchType == "item":
+                detailParts.append("exact item")
+            elif matchType == "visual":
+                referenceItemId = item.get("referenceItemId")
+                visualDistance = item.get("visualDistance")
+                if referenceItemId:
+                    detailParts.append(f"visual match to {referenceItemId} (d={visualDistance if visualDistance is not None else '?'})")
+                else:
+                    detailParts.append("visual match")
+            elif matchType == "keyword" and item.get("keyword"):
+                keyword = str(item.get("keyword") or "").strip()
+                if matchMode == "fuzzy":
+                    try:
+                        fuzzyText = f"{float(item.get('fuzzyScore')):.0f}"
+                    except (TypeError, ValueError):
+                        fuzzyText = "?"
+                    detailParts.append(f"fuzzy keyword {fuzzyText}: {keyword}")
+                elif matchMode == "normalized":
+                    detailParts.append(f"normalized keyword: {keyword}")
+                else:
+                    detailParts.append(f"keyword: {keyword}")
+            extraSignals = max(0, int(item.get("matchCount") or 0) - 1)
+            if extraSignals > 0:
+                detailParts.append(f"+{extraSignals} more signal(s)")
+            suffix = f" | {', '.join(detailParts)}" if detailParts else ""
             if itemName:
-                suffix = " (creator)" if matchType == "creator" else ""
-                if matchType == "keyword" and item.get("keyword"):
-                    suffix = f" (keyword: {item.get('keyword')})"
                 itemLines.append(f"{itemName} [{itemId}]{creatorText}{suffix}")
             else:
-                suffix = " (creator)" if matchType == "creator" else ""
-                if matchType == "keyword" and item.get("keyword"):
-                    suffix = f" (keyword: {item.get('keyword')})"
                 itemLines.append(f"{itemId}{creatorText}{suffix}")
         if len(flaggedItems) > 15:
             itemLines.append(f"... and {len(flaggedItems) - 15} more")

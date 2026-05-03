@@ -35,6 +35,7 @@ The private optional extensions currently listed are:
 - `plugins.private.orbatExtension`
 - `plugins.private.serverSafetyExtension`
 - `plugins.private.runtimeControlExtension`
+- `plugins.private.linkHubExtension`
 
 ## Hard Gates For Risky Stuff
 

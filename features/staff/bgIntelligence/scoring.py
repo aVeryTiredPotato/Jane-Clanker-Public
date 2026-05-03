@@ -62,6 +62,15 @@ def _safeInt(value: Any, default: int = 0) -> int:
         return default
 
 
+def _safeOptionalInt(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _safeFloat(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -115,7 +124,7 @@ def _scoreFloor(configModule: Any | None) -> int:
     return _clampInt(configuredFloor, minimum=0, maximum=19)
 
 
-def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal]]:
+def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal], int]:
     status = _status(_get(report, "externalSourceStatus", "SKIPPED"))
     matches = _get(report, "externalSourceMatches", []) or []
     details = _get(report, "externalSourceDetails", []) or []
@@ -123,13 +132,14 @@ def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal]]:
     signals: list[RiskSignal] = []
     scoreDelta = 0
     confidenceDelta = 0
+    reviewFloor = 0
 
     if status in {"", "SKIPPED"}:
-        return 0, 0, []
+        return 0, 0, [], 0
     if status == "ERROR":
         confidenceDelta -= 6
         suffix = f" {error}" if error else ""
-        return 0, confidenceDelta, [RiskSignal(f"External safety source scan failed.{suffix}", 0, "data")]
+        return 0, confidenceDelta, [RiskSignal(f"External safety source scan failed.{suffix}", 0, "data")], 0
     if status == "PARTIAL":
         confidenceDelta -= 4
         suffix = f" {error}" if error else ""
@@ -149,8 +159,8 @@ def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal]]:
                     "reassuring",
                 )
             )
-            return -2, confidenceDelta, signals
-        return 0, confidenceDelta, signals
+            return -2, confidenceDelta, signals, 0
+        return 0, confidenceDelta, signals, 0
 
     for match in list(matches):
         if not isinstance(match, dict):
@@ -160,19 +170,31 @@ def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal]]:
             scoreSum = _safeFloat(match.get("scoreSum"))
             guildCount = _safeInt(match.get("guildCount"))
             pastOffender = bool(match.get("pastOffender"))
-            if scoreSum >= 150 or guildCount >= 5:
-                points = 40
-            elif scoreSum >= 80 or guildCount >= 3:
-                points = 32
-            elif scoreSum >= 30 or guildCount >= 2:
+            if scoreSum >= 200 or guildCount >= 8:
+                points = 56
+            elif scoreSum >= 120 or guildCount >= 5:
+                points = 46
+            elif scoreSum >= 60 or guildCount >= 3:
+                points = 34
+            elif scoreSum >= 20 or guildCount >= 1:
                 points = 22
             elif scoreSum > 0 or guildCount >= 1:
                 points = 14
             else:
-                points = 8
+                points = 10
             if pastOffender:
-                points = min(48, points + 8)
+                points = min(64, points + 10)
             scoreDelta += points
+            if points >= 56:
+                reviewFloor = max(reviewFloor, 65)
+            elif points >= 46:
+                reviewFloor = max(reviewFloor, 58)
+            elif points >= 34:
+                reviewFloor = max(reviewFloor, 45)
+            elif points >= 22:
+                reviewFloor = max(reviewFloor, 35)
+            elif points > 0:
+                reviewFloor = max(reviewFloor, 25)
             detailsText = f"score sum {scoreSum:g}" if scoreSum else "record present"
             if guildCount:
                 detailsText += f" across {guildCount} server(s)"
@@ -199,6 +221,16 @@ def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal]]:
             else:
                 points = 8
             scoreDelta += points
+            if points >= 36:
+                reviewFloor = max(reviewFloor, 50)
+            elif points >= 28:
+                reviewFloor = max(reviewFloor, 42)
+            elif points >= 20:
+                reviewFloor = max(reviewFloor, 35)
+            elif points >= 14:
+                reviewFloor = max(reviewFloor, 28)
+            elif points > 0:
+                reviewFloor = max(reviewFloor, 20)
             groupText = f"{groupCount} flagged/safety group(s)" if groupCount else "record present"
             username = str(match.get("username") or "").strip()
             usernameText = f" for `{username}`" if username else ""
@@ -206,7 +238,7 @@ def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal]]:
             if match.get("lastSeen"):
                 signals.append(RiskSignal(f"Moco-co last saw this account at `{match.get('lastSeen')}`.", 0, "data"))
 
-    return scoreDelta, confidenceDelta, signals
+    return scoreDelta, confidenceDelta, signals, reviewFloor
 
 
 def scoreReport(
@@ -232,11 +264,23 @@ def scoreReport(
     roverError = str(_get(report, "roverError") or "").strip()
     identitySource = str(_get(report, "identitySource") or "rover").strip().lower()
     hardMinimum = 0
+    reviewFloor = 0
+    reviewFloorReason = ""
+
+    def raiseReviewFloor(value: int, reason: str) -> None:
+        nonlocal reviewFloor, reviewFloorReason
+        normalized = _clampInt(value)
+        if normalized > reviewFloor:
+            reviewFloor = normalized
+            reviewFloorReason = reason
+
     if identitySource in {"manual", "manual_username"}:
         confidence -= 5
         label = "Manual Roblox username override was used." if identitySource == "manual_username" else "Manual Roblox user ID override was used."
         signals.append(RiskSignal(label, 0, "data"))
-    externalScoreDelta, externalConfidenceDelta, externalSignals = _scoreExternalSources(report)
+    externalScoreDelta, externalConfidenceDelta, externalSignals, externalReviewFloor = _scoreExternalSources(report)
+    if externalReviewFloor > 0:
+        raiseReviewFloor(externalReviewFloor, "external safety record match")
     score += externalScoreDelta
     confidence += externalConfidenceDelta
     signals.extend(externalSignals)
@@ -252,7 +296,7 @@ def scoreReport(
             )
             if roverError:
                 signals.append(RiskSignal(f"RoVer note: {roverError}", 0, "data"))
-            finalRawScore = max(score, _scoreFloor(configModule))
+            finalRawScore = max(score, reviewFloor, _scoreFloor(configModule))
             finalScore = _clampInt(finalRawScore)
             finalConfidence = _clampInt(confidence)
             return RiskScore(
@@ -309,6 +353,85 @@ def scoreReport(
             hardMinimum = max(hardMinimum, minimumScore)
             suffix = f" Note: {note}" if note else ""
             signals.append(RiskSignal(f"Hard override: exact flagged Roblox username{valueText} matched.{suffix}", minimumScore, "override"))
+        elif matchType == "previous_username":
+            points = 24
+            if minimumScore > 0:
+                hardMinimum = max(hardMinimum, min(75, minimumScore))
+            else:
+                raiseReviewFloor(35, "configured previous-username match")
+            suffix = f" Note: {note}" if note else ""
+            score += points
+            signals.append(RiskSignal(f"Prior Roblox username{valueText} matched a configured username rule.{suffix}", points))
+
+    altMatches = [
+        match
+        for match in list(_get(report, "altMatches", []) or [])
+        if isinstance(match, dict)
+    ]
+    altStatus = _status(_get(report, "altScanStatus"))
+    if altMatches:
+        strengthWeights = {
+            "confirmed": 50,
+            "strong": 34,
+            "moderate": 20,
+            "weak": 6,
+            "data": 0,
+            "cleared": 0,
+        }
+        riskMatches = [
+            match
+            for match in altMatches
+            if str(match.get("strength") or "weak").strip().lower() not in {"cleared", "data"}
+        ]
+        clearedMatches = [
+            match
+            for match in altMatches
+            if str(match.get("strength") or "").strip().lower() == "cleared"
+        ]
+        altPoints = 0
+        for match in riskMatches[:8]:
+            strength = str(match.get("strength") or "weak").strip().lower()
+            altPoints += strengthWeights.get(strength, 6)
+        points = min(70, altPoints)
+        if points > 0:
+            score += points
+            strongest = riskMatches[0] if riskMatches else {}
+            candidate = str(strongest.get("candidateUsername") or "").strip()
+            knownUsername = str(strongest.get("knownRobloxUsername") or "").strip()
+            strength = str(strongest.get("strength") or "weak").strip().lower()
+            evidenceType = str(strongest.get("evidenceType") or "alt signal").replace("_", " ")
+            if strength == "confirmed":
+                raiseReviewFloor(70, "confirmed alt/identity evidence")
+            elif strength == "strong":
+                raiseReviewFloor(55, "strong alt/identity evidence")
+            elif strength == "moderate":
+                raiseReviewFloor(38, "moderate alt/identity evidence")
+            elif len(riskMatches) >= 2:
+                raiseReviewFloor(25, "multiple weak alt/identity signals")
+            detail = ""
+            if candidate and knownUsername:
+                detail = f" (`{candidate}` vs known member `{knownUsername}`)"
+            elif knownUsername:
+                detail = f" (known member `{knownUsername}`)"
+            signals.append(
+                RiskSignal(
+                    f"Alt/identity evidence: {_count(riskMatches)} signal(s), strongest `{strength}` {evidenceType}{detail}. Verify before treating as identity proof.",
+                    points,
+                )
+            )
+        if clearedMatches:
+            signals.append(RiskSignal("Known-member alt registry has a cleared/not-alt relationship for this target.", 0, "data"))
+    elif altStatus == "ERROR":
+        confidence -= 4
+        signals.append(RiskSignal("Known-member alt check could not be completed.", 0, "data"))
+
+    usernameHistoryStatus = _status(_get(report, "usernameHistoryScanStatus"))
+    previousUsernames = _get(report, "previousRobloxUsernames", []) or []
+    if usernameHistoryStatus == "OK" and _count(previousUsernames) > 0:
+        signals.append(RiskSignal(f"Roblox username history returned {_count(previousUsernames)} prior name(s).", 0, "data"))
+    elif usernameHistoryStatus == "ERROR":
+        confidence -= 4
+        signals.append(RiskSignal("Roblox username history could not be checked.", 0, "data"))
 
     ageDays = _get(report, "robloxAgeDays")
     try:
@@ -341,6 +464,37 @@ def scoreReport(
         confidence -= 10
         signals.append(RiskSignal("Roblox account age could not be checked.", 0, "data"))
 
+    connectionStatus = _status(_get(report, "connectionScanStatus"))
+    connectionSummary = _dict(_get(report, "connectionSummary", {}) or {})
+    friendCount = _safeOptionalInt(connectionSummary.get("friends"))
+    followerCount = _safeOptionalInt(connectionSummary.get("followers"))
+    followingCount = _safeOptionalInt(connectionSummary.get("following"))
+    knownConnectionCounts = [
+        value
+        for value in (friendCount, followerCount, followingCount)
+        if value is not None
+    ]
+    if connectionStatus in {"OK", "PARTIAL"} and knownConnectionCounts:
+        friends = friendCount or 0
+        followers = followerCount or 0
+        following = followingCount or 0
+        socialTotal = friends + followers + following
+        if ageDaysInt is not None and ageDaysInt >= 365 and friends <= 2 and followers <= 2 and following <= 2:
+            score += 4
+            signals.append(RiskSignal("Older Roblox account has almost no visible social footprint.", 4))
+        elif ageDaysInt is not None and ageDaysInt >= 1095 and socialTotal <= 10:
+            score += 2
+            signals.append(RiskSignal("Older Roblox account has a very thin visible social footprint.", 2))
+        if ageDaysInt is not None and ageDaysInt >= 365 and ((friends >= 75 and followers >= 10) or followers >= 100):
+            score -= 2
+            signals.append(RiskSignal("Visible Roblox social footprint looks established.", -2, "reassuring"))
+        if connectionStatus == "PARTIAL":
+            confidence -= 3
+            signals.append(RiskSignal("Roblox connection counts were only partially checked.", 0, "data"))
+    elif connectionStatus == "ERROR":
+        confidence -= 5
+        signals.append(RiskSignal("Roblox connection counts could not be checked.", 0, "data"))
+
     flaggedGroups = _get(report, "flaggedGroups", []) or []
     flagMatches = _get(report, "flagMatches", []) or []
     groupStatus = _status(_get(report, "groupScanStatus"))
@@ -349,26 +503,54 @@ def scoreReport(
         if flaggedGroupCount:
             points = min(54, 30 + max(0, flaggedGroupCount - 1) * 8)
             score += points
+            raiseReviewFloor(
+                min(60, 40 + max(0, flaggedGroupCount - 1) * 5),
+                "configured flagged Roblox group match",
+            )
             signals.append(RiskSignal(f"{flaggedGroupCount} flagged Roblox group(s) matched.", points))
-        for match in list(flagMatches or [])[:8]:
+        usernameRuleMatched = False
+        usernameKeywordValues: set[str] = set()
+        groupKeywordValues: set[str] = set()
+        groupKeywordTargets: set[str] = set()
+        for match in list(flagMatches or []):
             if not isinstance(match, dict):
                 continue
             matchType = str(match.get("type") or "").strip().lower()
             context = str(match.get("context") or "").strip().lower()
+            value = str(match.get("value") or "").strip().lower()
             if matchType == "username":
-                score += 20
-                signals.append(RiskSignal("Roblox username matched a flagged username rule.", 20))
+                usernameRuleMatched = True
             elif matchType == "keyword" and context == "username":
-                score += 15
-                signals.append(RiskSignal(f"Roblox username matched keyword `{match.get('value')}`.", 15))
+                if value:
+                    usernameKeywordValues.add(value)
             elif matchType == "keyword" and context == "group":
-                score += 10
-                signals.append(
-                    RiskSignal(
-                        f"Group keyword `{match.get('value')}` matched {match.get('groupName') or 'a group'}.",
-                        10,
-                    )
+                if value:
+                    groupKeywordValues.add(value)
+                target = str(match.get("groupId") or match.get("groupName") or "").strip().lower()
+                if target:
+                    groupKeywordTargets.add(target)
+        if usernameRuleMatched:
+            points = 20
+            score += points
+            raiseReviewFloor(35, "configured Roblox username rule match")
+            signals.append(RiskSignal("Roblox username matched a flagged username rule.", points))
+        if usernameKeywordValues:
+            points = min(24, 15 + max(0, len(usernameKeywordValues) - 1) * 3)
+            score += points
+            raiseReviewFloor(30, "configured Roblox username keyword match")
+            valueText = ", ".join(f"`{value}`" for value in sorted(usernameKeywordValues)[:3])
+            suffix = f" ({valueText})" if valueText else ""
+            signals.append(RiskSignal(f"Roblox username matched configured keyword(s){suffix}.", points))
+        if groupKeywordValues:
+            valueText = ", ".join(f"`{value}`" for value in sorted(groupKeywordValues)[:4])
+            targetCount = len(groupKeywordTargets) or 1
+            signals.append(
+                RiskSignal(
+                    f"Configured group keyword(s) matched {targetCount} group(s): {valueText}.",
+                    0,
+                    "data",
                 )
+            )
         if groupStatus == "OK" and not flaggedGroupCount and not flagMatches:
             score -= 6
             signals.append(RiskSignal("Group scan found no configured flags.", -6, "reassuring"))
@@ -442,20 +624,45 @@ def scoreReport(
     inventoryStatus = _status(_get(report, "inventoryScanStatus"))
     if reviewBucket == bgBuckets.adultBgReviewBucket:
         itemPoints = 0
+        exactItemSignals = 0
+        visualItemSignals = 0
+        keywordItemSignals = 0
+        fuzzyKeywordSignals = 0
         for item in list(flaggedItems or [])[:10]:
             if not isinstance(item, dict):
                 continue
             matchType = str(item.get("matchType") or "").strip().lower()
+            matchMode = str(item.get("matchMode") or "").strip().lower()
             if matchType in {"item", "creator"}:
                 itemPoints += 25
+                exactItemSignals += 1
+            elif matchType == "visual":
+                itemPoints += 18
+                visualItemSignals += 1
             elif matchType == "keyword":
-                itemPoints += 12
+                itemPoints += 8 if matchMode == "fuzzy" else 12
+                keywordItemSignals += 1
+                if matchMode == "fuzzy":
+                    fuzzyKeywordSignals += 1
             else:
                 itemPoints += 15
         if itemPoints:
             itemPoints = min(itemPoints, 45)
             score += itemPoints
+            if exactItemSignals:
+                raiseReviewFloor(42 if exactItemSignals >= 2 else 36, "configured inventory item or creator match")
+            elif visualItemSignals:
+                raiseReviewFloor(34, "inventory thumbnail similarity match")
+            elif keywordItemSignals:
+                raiseReviewFloor(26 if fuzzyKeywordSignals == keywordItemSignals else 30, "configured inventory keyword match")
             signals.append(RiskSignal(f"{_count(flaggedItems)} flagged inventory item(s) matched.", itemPoints))
+            inventorySummary = _dict(_get(report, "inventorySummary", {}) or {})
+            fuzzyHits = _safeInt(inventorySummary.get("fuzzyKeywordMatchCount"))
+            visualHits = _safeInt(inventorySummary.get("visualMatchedCount"))
+            if fuzzyHits > 0:
+                signals.append(RiskSignal(f"{fuzzyHits} inventory hit(s) came from fuzzy keyword matching; verify thumbnails manually.", 0, "data"))
+            if visualHits > 0:
+                signals.append(RiskSignal(f"{visualHits} inventory hit(s) came from thumbnail similarity to flagged items.", 0, "data"))
         if inventoryStatus == "PRIVATE":
             score += 4
             confidence -= 30
@@ -480,14 +687,25 @@ def scoreReport(
     favoriteGameStatus = _status(_get(report, "favoriteGameScanStatus"))
     if reviewBucket == bgBuckets.adultBgReviewBucket:
         gamePoints = 0
+        exactGameSignals = 0
+        keywordGameSignals = 0
         for game in list(flaggedFavoriteGames or [])[:10]:
             if not isinstance(game, dict):
                 continue
             matchType = str(game.get("matchType") or "").strip().lower()
-            gamePoints += 18 if matchType == "game" else 10
+            if matchType == "game":
+                gamePoints += 18
+                exactGameSignals += 1
+            else:
+                gamePoints += 10
+                keywordGameSignals += 1
         if gamePoints:
             gamePoints = min(gamePoints, 35)
             score += gamePoints
+            if exactGameSignals:
+                raiseReviewFloor(34 if exactGameSignals >= 2 else 30, "configured favorite-game match")
+            elif keywordGameSignals:
+                raiseReviewFloor(24, "configured favorite-game keyword match")
             signals.append(RiskSignal(f"{_count(flaggedFavoriteGames)} flagged favorite game(s) matched.", gamePoints))
         if favoriteGameStatus == "OK" and not flaggedFavoriteGames:
             score -= 2
@@ -517,6 +735,10 @@ def scoreReport(
     if flaggedBadgeCount:
         points = min(50, 28 + max(0, flaggedBadgeCount - 1) * 8)
         score += points
+        raiseReviewFloor(
+            min(58, 40 + max(0, flaggedBadgeCount - 1) * 5),
+            "configured flagged badge match",
+        )
         signals.append(RiskSignal(f"{flaggedBadgeCount} flagged badge(s) matched.", points))
     elif badgeStatus == "OK":
         points = -4 if reviewBucket == bgBuckets.adultBgReviewBucket else -8
@@ -578,6 +800,14 @@ def scoreReport(
         elif awardDateStatus == "ERROR":
             confidence -= 4
             signals.append(RiskSignal("Badge award-date timeline could not be verified.", 0, "data"))
+        elif awardDateStatus == "PARTIAL" and datedBadges > 0:
+            signals.append(
+                RiskSignal(
+                    f"Badge timeline has {datedBadges} partial dated point(s), but no verified full award timeline.",
+                    0,
+                    "data",
+                )
+            )
         elif badgeHistoryCount >= 25:
             signals.append(RiskSignal(f"Public badge sample has {badgeHistoryCount} badge(s), but no true award timeline.", 0, "data"))
         if badgeHistoryCount == 0 and ageDaysInt is not None and ageDaysInt >= 365:
@@ -646,7 +876,17 @@ def scoreReport(
     if not signals:
         signals.append(RiskSignal("No configured risk signals matched.", 0, "reassuring"))
 
-    finalRawScore = max(score, hardMinimum)
+    if reviewFloor > hardMinimum and reviewFloor > score:
+        reason = reviewFloorReason or "configured risk evidence"
+        signals.append(
+            RiskSignal(
+                f"Review floor: {reason} should stay reviewable after clean-context deductions.",
+                reviewFloor,
+                "override",
+            )
+        )
+
+    finalRawScore = max(score, hardMinimum, reviewFloor)
     if hardMinimum <= 0:
         finalRawScore = max(finalRawScore, _scoreFloor(configModule))
     finalScore = _clampInt(finalRawScore)

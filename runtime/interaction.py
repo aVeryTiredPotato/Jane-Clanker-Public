@@ -153,10 +153,49 @@ async def safeChannelSend(channel: Any, **kwargs: Any) -> discord.Message | None
         return None
 
 
+async def safeFetchChannel(botOrGuild: Any, channelId: int) -> Any | None:
+    try:
+        normalizedChannelId = int(channelId or 0)
+    except (TypeError, ValueError):
+        return None
+    if normalizedChannelId <= 0:
+        return None
+    getChannel = getattr(botOrGuild, "get_channel", None)
+    if callable(getChannel):
+        try:
+            cached = getChannel(normalizedChannelId)
+        except Exception:
+            cached = None
+        if cached is not None:
+            return cached
+    fetchChannel = getattr(botOrGuild, "fetch_channel", None)
+    if not callable(fetchChannel):
+        return None
+    try:
+        return await taskBudgeter.runDiscord(lambda: fetchChannel(normalizedChannelId))
+    except _SAFE_DISCORD_EXCEPTIONS + (discord.InvalidData, TypeError, ValueError) as exc:
+        _logSafeFailure("fetch channel", exc)
+        return None
+
+
+async def safeFetchMessage(channel: Any, messageId: int) -> discord.Message | None:
+    try:
+        normalizedMessageId = int(messageId or 0)
+    except (TypeError, ValueError):
+        return None
+    if normalizedMessageId <= 0 or not hasattr(channel, "fetch_message"):
+        return None
+    try:
+        return await taskBudgeter.runDiscord(lambda: channel.fetch_message(normalizedMessageId))
+    except _SAFE_DISCORD_EXCEPTIONS + _SAFE_CALLER_EXCEPTIONS as exc:
+        _logSafeFailure("fetch message", exc)
+        return None
+
+
 def _makeRetrySafeResponseMethod(originalMethod: Any, action: str) -> Any:
     async def _patched(self: discord.InteractionResponse, *args: Any, **kwargs: Any) -> Any:
         try:
-            return await taskBudgeter.runDiscord(lambda: originalMethod(self, *args, **kwargs))
+            return await taskBudgeter.runInteractionAck(lambda: originalMethod(self, *args, **kwargs))
         except (discord.NotFound, discord.HTTPException) as exc:
             if isUnknownInteractionError(exc):
                 _logSafeFailure(action, exc)

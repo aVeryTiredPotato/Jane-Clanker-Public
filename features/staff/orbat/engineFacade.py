@@ -21,9 +21,9 @@ class EngineValuesFacade:
             lambda: {"values": self._engine.getValues(self._sheetKey, range, **kwargs)}
         )
 
-    def batchGet(self, spreadsheetId: str, ranges: list[str]):
+    def batchGet(self, spreadsheetId: str, ranges: list[str], **kwargs):
         return EngineExecute(
-            lambda: {"valueRanges": self._engine.batchGetValues(self._sheetKey, ranges)}
+            lambda: {"valueRanges": self._engine.batchGetValues(self._sheetKey, ranges, **kwargs)}
         )
 
     def batchUpdate(self, spreadsheetId: str, body: dict):

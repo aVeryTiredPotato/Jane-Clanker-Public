@@ -5,6 +5,8 @@ from typing import Any, Callable, Optional
 import discord
 
 from features.staff.applications import service as applicationsService
+from runtime import interaction as interactionRuntime
+from runtime import taskBudgeter
 
 
 async def resolveHubMessage(
@@ -21,15 +23,12 @@ async def resolveHubMessage(
 
     channel = guild.get_channel(channelId)
     if channel is None:
-        try:
-            channel = await botClient.fetch_channel(channelId)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return None
+        channel = await interactionRuntime.safeFetchChannel(botClient, channelId)
     if not isinstance(channel, (discord.TextChannel, discord.Thread)):
         return None
 
     try:
-        return await channel.fetch_message(messageId)
+        return await taskBudgeter.runDiscord(lambda: channel.fetch_message(messageId))
     except discord.NotFound:
         if deleteMissing:
             try:
@@ -68,12 +67,10 @@ async def refreshHubEmbedsForDivision(
             continue
         view = buildView(divisionKey, isOpen)
         embed = buildEmbed(division)
-        try:
-            await message.edit(embed=embed, view=view)
-            cog.bot.add_view(view, message_id=message.id)
-            updated += 1
-        except (discord.Forbidden, discord.HTTPException):
+        if not await interactionRuntime.safeMessageEdit(message, embed=embed, view=view):
             continue
+        cog.bot.add_view(view, message_id=message.id)
+        updated += 1
     return updated
 
 
@@ -99,12 +96,10 @@ async def refreshHubViewsForDivision(
         if message is None:
             continue
         view = buildView(divisionKey, isOpen)
-        try:
-            await message.edit(view=view)
-            cog.bot.add_view(view, message_id=message.id)
-            updated += 1
-        except (discord.Forbidden, discord.HTTPException):
+        if not await interactionRuntime.safeMessageEdit(message, view=view):
             continue
+        cog.bot.add_view(view, message_id=message.id)
+        updated += 1
     return updated
 
 

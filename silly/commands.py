@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import random
@@ -22,6 +23,7 @@ _janeGreetingRegex = re.compile(r"\b(hi|hello)\b", re.IGNORECASE)
 _americaYaRegex = re.compile(r"\bamerica\W*ya\b", re.IGNORECASE)
 _halloEverynyanRegex = re.compile(r"\bhallo\W*everynyan\b", re.IGNORECASE)
 _hampterRegex = re.compile(r"\bhampter\b", re.IGNORECASE)
+_bumLocatorRegex = re.compile(r"\bwho(?:'s| is)\s+a\s+bum\b", re.IGNORECASE)
 _eyesRegex = re.compile(r"^\s*(?::eyes:|👀)\s*$", re.IGNORECASE)
 _tanabataTreeRegex = re.compile("^\\s*(?::tanabata_tree:|\U0001F38B)\\s*$", re.IGNORECASE)
 _recipePromptRegex = re.compile(r"how\s+do\s+i\s+make\s+(?P<item>[^?\n\r]+)", re.IGNORECASE)
@@ -55,8 +57,13 @@ _tanabataTreeUserIds = {
     1468150318675136634,
 }
 _tanabataTreeGifUrl = "https://media.discordapp.net/attachments/1374350515617665088/1462696462482935808/image.gif?ex=69e12b7c&is=69dfd9fc&hm=bc65c13dc60b72fbaf8fc8aed05b5b1b27113bd0aec2004e3f8c55de813cad57&="
+_perishUserIds = {
+    776897552954949683,
+}
+_perishGifUrl = "https://media.discordapp.net/attachments/1373420224363102208/1471997910379008231/togif.gif?ex=69eb4722&is=69e9f5a2&hm=d43a9358b8f102bd8652947b2a0c17e86b303dd1a9163e8444208dec0f0feadc&="
 _stimmerUserId = 641429806382317583
 _momUserId = 331660652672319488
+_bumUserId = 952282215033745448
 _janeGreetingBlacklistedUserIds = {
     1220034130805260288,
 }
@@ -223,6 +230,14 @@ def _isHampterTrigger(content: str) -> bool:
         return True
     return "hampter" in _normalizeText(raw)
 
+
+def _isBumLocatorTrigger(content: str) -> bool:
+    raw = str(content or "")
+    if _bumLocatorRegex.search(raw):
+        return True
+    normalized = _normalizeText(raw)
+    return "whosabum" in normalized or "whoisabum" in normalized
+
 def _isHorseTrigger(content: str) -> bool:
     return _normalizeText(str(content or "")) == "horse"
 
@@ -235,6 +250,10 @@ def _isTanabataTreeTrigger(content: str) -> bool:
     return bool(_tanabataTreeRegex.match(str(content or "")))
 
 
+def _isPerishTrigger(content: str) -> bool:
+    return _normalizeText(str(content or "")) == "perish"
+
+
 _DirectSillyResponse = tuple[set[int], Callable[[str], bool], str]
 _directSillyResponses: tuple[_DirectSillyResponse, ...] = (
     (_americaYaUserIds, _isAmericaYaTrigger, "Hallo!"),
@@ -242,6 +261,7 @@ _directSillyResponses: tuple[_DirectSillyResponse, ...] = (
     (_horseUserIds, _isHorseTrigger, _horseGifUrl),
     (_eyesUserIds, _isEyesTrigger, _eyesGifUrl),
     (_tanabataTreeUserIds, _isTanabataTreeTrigger, _tanabataTreeGifUrl),
+    (_perishUserIds, _isPerishTrigger, _perishGifUrl),
 )
 
 
@@ -625,6 +645,25 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
     if int(message.author.id) in _hampterUserIds and _isHampterTrigger(content) and isMentioningJane:
         if await _tryChannelSend(message.channel, _hampterGifUrl):
             await interactionRuntime.safeMessageDelete(message)
+        return
+
+    if isMentioningJane and _isBumLocatorTrigger(content):
+        locatingMessage = await interactionRuntime.safeChannelSend(
+            message.channel,
+            content=":compass: Locating...",
+        )
+        if locatingMessage is None:
+            return
+
+        async def _revealBum() -> None:
+            await asyncio.sleep(5)
+            await interactionRuntime.safeMessageEdit(
+                locatingMessage,
+                content=f"Bum located! <@{_bumUserId}>",
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+            )
+
+        asyncio.create_task(_revealBum())
         return
 
     if isMentioningJane and _isAuraTrigger(content):

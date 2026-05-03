@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
@@ -33,6 +33,8 @@ from features.staff.applications.divisionEditor import (
     _parseSnowflake,
 )
 from features.staff.applications.panel import ApplicationsPanelView
+from runtime import interaction as interactionRuntime
+from runtime import taskBudgeter
 from features.staff.applications.questionEditor import (
     ApplicationsDivisionChoiceQuestionModal,
     ApplicationsDivisionLinkQuestionModal,
@@ -46,7 +48,7 @@ from features.staff.recruitment import sheets as recruitmentSheets
 from runtime import interaction as interactionRuntime
 from runtime import orbatAudit as orbatAuditRuntime
 from runtime import taskBudgeter
-from features.staff.sessions import roblox
+from features.staff.sessions.Roblox import robloxGroups, robloxUsers
 
 from features.staff.applications.cogShared import _isFinal, _normalizeAppKey, _parseDays, _toIntList, _toPositiveInt
 
@@ -99,13 +101,12 @@ class ApplicationsFlowMixin:
             return
         threadName = f"{divisionName} applications"
         try:
-            thread = await message.create_thread(name=threadName[:100], auto_archive_duration=10080)
+            thread = await taskBudgeter.runDiscord(
+                lambda: message.create_thread(name=threadName[:100], auto_archive_duration=10080)
+            )
         except (discord.Forbidden, discord.HTTPException):
             return
-        try:
-            await thread.send("Applications thread created automatically for this division hub.")
-        except (discord.Forbidden, discord.HTTPException):
-            return
+        await interactionRuntime.safeChannelSend(thread, content="Applications thread created automatically for this division hub.")
 
     async def refreshHubViewsForDivision(self, guild: discord.Guild, divisionKey: str) -> int:
         return await applicationsHubRefresh.refreshHubViewsForDivision(
@@ -154,16 +155,10 @@ class ApplicationsFlowMixin:
         customName = str(division.get("hubMessageName") or "").strip()
         customAvatarUrl = str(division.get("hubMessageAvatarUrl") or "").strip()
         if not customName and not customAvatarUrl:
-            try:
-                return await targetChannel.send(embed=embed, view=view)
-            except (discord.Forbidden, discord.HTTPException):
-                return None
+            return await interactionRuntime.safeChannelSend(targetChannel, embed=embed, view=view)
 
         if not self.bot.user:
-            try:
-                return await targetChannel.send(embed=embed, view=view)
-            except (discord.Forbidden, discord.HTTPException):
-                return None
+            return await interactionRuntime.safeChannelSend(targetChannel, embed=embed, view=view)
 
         threadTarget: Optional[discord.Thread] = None
         webhookHostChannel: Optional[discord.TextChannel] = None
@@ -175,20 +170,14 @@ class ApplicationsFlowMixin:
             webhookHostChannel = targetChannel
 
         if webhookHostChannel is None:
-            try:
-                return await targetChannel.send(embed=embed, view=view)
-            except (discord.Forbidden, discord.HTTPException):
-                return None
+            return await interactionRuntime.safeChannelSend(targetChannel, embed=embed, view=view)
 
         me = webhookHostChannel.guild.me
         if me is None or not webhookHostChannel.permissions_for(me).manage_webhooks:
-            try:
-                return await targetChannel.send(embed=embed, view=view)
-            except (discord.Forbidden, discord.HTTPException):
-                return None
+            return await interactionRuntime.safeChannelSend(targetChannel, embed=embed, view=view)
 
         try:
-            webhooks = await webhookHostChannel.webhooks()
+            webhooks = await taskBudgeter.runDiscord(lambda: webhookHostChannel.webhooks())
             divisionKey = str(division.get("key") or "").strip().lower() or "default"
             webhookName = f"jane-division-hub-{divisionKey}"[:80]
             webhook = next(
@@ -200,24 +189,30 @@ class ApplicationsFlowMixin:
                 None,
             )
             if webhook is None:
-                webhook = await webhookHostChannel.create_webhook(
-                    name=webhookName,
-                    reason="Division-specific hub branding",
+                webhook = await taskBudgeter.runDiscord(
+                    lambda: webhookHostChannel.create_webhook(
+                        name=webhookName,
+                        reason="Division-specific hub branding",
+                    )
                 )
 
             desiredDisplayName = str(customName or division.get("displayName") or "Jane Clanker").strip()[:80] or "Jane Clanker"
             avatarBytes = await self._fetchWebhookAvatarBytes(customAvatarUrl) if customAvatarUrl else None
             try:
                 if avatarBytes is not None:
-                    await webhook.edit(
-                        name=desiredDisplayName,
-                        avatar=avatarBytes,
-                        reason="Division-specific hub branding",
+                    await taskBudgeter.runDiscord(
+                        lambda: webhook.edit(
+                            name=desiredDisplayName,
+                            avatar=avatarBytes,
+                            reason="Division-specific hub branding",
+                        )
                     )
                 elif str(webhook.name or "") != desiredDisplayName:
-                    await webhook.edit(
-                        name=desiredDisplayName,
-                        reason="Division-specific hub branding",
+                    await taskBudgeter.runDiscord(
+                        lambda: webhook.edit(
+                            name=desiredDisplayName,
+                            reason="Division-specific hub branding",
+                        )
                     )
             except (discord.Forbidden, discord.HTTPException):
                 pass
@@ -231,15 +226,12 @@ class ApplicationsFlowMixin:
             if threadTarget is not None:
                 kwargs["thread"] = threadTarget
 
-            sent = await webhook.send(**kwargs)
+            sent = await taskBudgeter.runDiscord(lambda: webhook.send(**kwargs))
             if isinstance(sent, discord.Message):
                 return sent
             return None
         except Exception:
-            try:
-                return await targetChannel.send(embed=embed, view=view)
-            except (discord.Forbidden, discord.HTTPException):
-                return None
+            return await interactionRuntime.safeChannelSend(targetChannel, embed=embed, view=view)
 
     async def refreshReviewCard(self, applicationId: int) -> None:
         await applicationsReviewFlow.refreshReviewCard(
@@ -255,11 +247,11 @@ class ApplicationsFlowMixin:
         user = self.bot.get_user(applicantId)
         if user is None:
             try:
-                user = await self.bot.fetch_user(applicantId)
+                user = await taskBudgeter.runDiscord(lambda: self.bot.fetch_user(applicantId))
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 return
         try:
-            await user.send(message)
+            await taskBudgeter.runDiscord(lambda: user.send(message))
         except (discord.Forbidden, discord.HTTPException):
             return
 
@@ -269,7 +261,7 @@ class ApplicationsFlowMixin:
         member = guild.get_member(applicantId)
         if member is None:
             try:
-                member = await guild.fetch_member(applicantId)
+                member = await taskBudgeter.runDiscord(lambda: guild.fetch_member(applicantId))
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 return 0, []
 
@@ -279,7 +271,9 @@ class ApplicationsFlowMixin:
             if role is None or role in member.roles:
                 continue
             try:
-                await member.add_roles(role, reason=f"Division app approved by {reviewerId}")
+                await taskBudgeter.runDiscord(
+                    lambda role=role: member.add_roles(role, reason=f"Division app approved by {reviewerId}")
+                )
                 addedNames.append(role.name)
             except (discord.Forbidden, discord.HTTPException):
                 continue
@@ -291,10 +285,7 @@ class ApplicationsFlowMixin:
             return
         channel = guild.get_channel(channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channelId)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                return
+            channel = await interactionRuntime.safeFetchChannel(self.bot, channelId)
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return
 
@@ -305,10 +296,7 @@ class ApplicationsFlowMixin:
             color=discord.Color.green(),
             timestamp=datetime.now(timezone.utc),
         )
-        try:
-            await channel.send(embed=embed)
-        except (discord.Forbidden, discord.HTTPException):
-            return
+        await interactionRuntime.safeChannelSend(channel, embed=embed)
 
     async def autoAcceptDivisionGroup(
         self,
@@ -319,11 +307,11 @@ class ApplicationsFlowMixin:
         if groupId <= 0:
             return ""
 
-        lookup = await roblox.fetchRobloxUser(int(application["applicantId"]))
+        lookup = await robloxUsers.fetchRobloxUser(int(application["applicantId"]))
         if not lookup.robloxId:
             return " Group auto-accept skipped (no RoVer link)."
 
-        accept = await roblox.acceptJoinRequestForGroup(int(lookup.robloxId), groupId)
+        accept = await robloxGroups.acceptJoinRequestForGroup(int(lookup.robloxId), groupId)
         if accept.ok:
             return f" Group auto-accept succeeded for group `{groupId}`."
 
@@ -371,14 +359,14 @@ class ApplicationsFlowMixin:
         if not recruitmentAliases:
             recruitmentAliases = {"recruitment"}
 
-        lookup = await roblox.fetchRobloxUser(int(application["applicantId"]))
+        lookup = await robloxUsers.fetchRobloxUser(int(application["applicantId"]))
         robloxUsername = str(lookup.robloxUsername or "").strip()
         if not robloxUsername:
             return " ORBAT seed skipped (no RoVer link)."
 
         # Recruitment apps seed the recruitment tracker.
         if normalizedDivision in recruitmentAliases:
-            if not getattr(config, "deptSpreadsheetId", ""):
+            if not getattr(config, "recruitmentSpreadsheetId", ""):
                 return " Recruitment ORBAT seed skipped (sheet not configured)."
             try:
                 seeded = await taskBudgeter.runSheetsThread(
@@ -608,25 +596,24 @@ class ApplicationsFlowMixin:
             messageDeletedOrMissing = True
         if isinstance(channel, (discord.TextChannel, discord.Thread)) and messageId > 0:
             try:
-                message = await channel.fetch_message(messageId)
+                message = await taskBudgeter.runDiscord(lambda: channel.fetch_message(messageId))
             except discord.NotFound:
                 messageDeletedOrMissing = True
             except (discord.Forbidden, discord.HTTPException):
                 deleteFailed = True
             else:
-                try:
-                    try:
-                        await message.delete(reason="Applications bulk close by server administrator.")
-                    except TypeError:
-                        await message.delete()
+                deleted = await interactionRuntime.safeMessageDelete(message)
+                if deleted:
                     messageDeletedOrMissing = True
-                except (discord.Forbidden, discord.HTTPException):
+                else:
                     deleteFailed = True
 
         threadChannel = await self._resolveGuildChannel(guild, messageId)
         if isinstance(threadChannel, discord.Thread):
             try:
-                await threadChannel.delete(reason="Applications bulk close by server administrator.")
+                await taskBudgeter.runDiscord(
+                    lambda: threadChannel.delete(reason="Applications bulk close by server administrator.")
+                )
                 threadDeleted = True
             except (discord.Forbidden, discord.HTTPException):
                 pass
@@ -648,16 +635,14 @@ class ApplicationsFlowMixin:
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return False, True
         try:
-            message = await channel.fetch_message(reviewMessageId)
+            message = await taskBudgeter.runDiscord(lambda: channel.fetch_message(reviewMessageId))
         except discord.NotFound:
             return False, False
         except (discord.Forbidden, discord.HTTPException):
             return False, True
-        try:
-            await message.delete(reason="Applications bulk close by server administrator.")
+        if await interactionRuntime.safeMessageDelete(message):
             return True, False
-        except (discord.Forbidden, discord.HTTPException):
-            return False, True
+        return False, True
 
     async def runApplicationsCloseAllActive(
         self,

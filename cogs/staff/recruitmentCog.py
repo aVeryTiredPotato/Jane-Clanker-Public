@@ -22,6 +22,7 @@ from runtime import commandScopes as runtimeCommandScopes
 from runtime import interaction as interactionRuntime
 from runtime import normalization
 from runtime import permissions as runtimePermissions
+from runtime import taskBudgeter
 
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,14 @@ def _patrolPoints(durationMinutes: int) -> int:
     if durationMinutes <= 0 or pointsPer15 <= 0:
         return 0
     return max(0, durationMinutes // 15) * pointsPer15
+
+
+def _groupPatrolPoints() -> int:
+    return max(0, int(getattr(config, "recruitmentGroupPatrolPoints", 6) or 0))
+
+
+def _maxPatrolDurationMinutes() -> int:
+    return max(0, int(getattr(config, "recruitmentPatrolMaxDurationMinutes", 240) or 0))
 
 
 def _hasRole(member: discord.Member, roleId: Optional[int]) -> bool:
@@ -127,6 +136,14 @@ class RecruitmentCog(commands.Cog):
             return any(role.id in configuredRoleIds for role in member.roles)
         return self._canSubmitRecruitment(member)
 
+    def _validatePatrolDuration(self, durationMinutes: int) -> Optional[str]:
+        if int(durationMinutes or 0) <= 0:
+            return "Duration must be greater than 0 minutes."
+        maxDuration = _maxPatrolDurationMinutes()
+        if maxDuration > 0 and int(durationMinutes) > maxDuration:
+            return f"Duration cannot exceed {maxDuration} minutes."
+        return None
+
     def _recruitmentCommandGuildIds(self) -> set[int]:
         return _normalizeRoleIdList(getattr(config, "recruitmentCommandGuildIds", []))
 
@@ -153,14 +170,14 @@ class RecruitmentCog(commands.Cog):
         guild = self.bot.get_guild(sourceGuildId)
         if guild is None:
             try:
-                guild = await self.bot.fetch_guild(sourceGuildId)
+                guild = await taskBudgeter.runDiscord(lambda: self.bot.fetch_guild(sourceGuildId))
             except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                 return None
         member = guild.get_member(int(userId))
         if member is not None:
             return member
         try:
-            return await guild.fetch_member(int(userId))
+            return await taskBudgeter.runDiscord(lambda: guild.fetch_member(int(userId)))
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             return None
 
@@ -188,10 +205,7 @@ class RecruitmentCog(commands.Cog):
             if channel is None:
                 channel = guild.get_channel(targetChannelId)
             if channel is None:
-                try:
-                    channel = await self.bot.fetch_channel(targetChannelId)
-                except (discord.Forbidden, discord.NotFound, discord.HTTPException, discord.InvalidData):
-                    channel = None
+                channel = await interactionRuntime.safeFetchChannel(self.bot, targetChannelId)
             if channel is not None:
                 return channel
         return fallback
@@ -224,16 +238,14 @@ class RecruitmentCog(commands.Cog):
         if not content:
             content = None
         allowedMentions = discord.AllowedMentions(roles=True, users=True)
-        try:
-            return await channel.send(
-                content=content,
-                embed=embed,
-                view=view,
-                files=files or [],
-                allowed_mentions=allowedMentions,
-            )
-        except (discord.Forbidden, discord.HTTPException):
-            return None
+        return await interactionRuntime.safeChannelSend(
+            channel,
+            content=content,
+            embed=embed,
+            view=view,
+            files=files or [],
+            allowed_mentions=allowedMentions,
+        )
 
     async def _resolveConfiguredMessageChannel(
         self,
@@ -246,10 +258,7 @@ class RecruitmentCog(commands.Cog):
         if channel is None:
             channel = guild.get_channel(int(channelId))
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(int(channelId))
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException, discord.InvalidData):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, int(channelId))
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             return channel
         return None
@@ -438,6 +447,11 @@ class RecruitmentCog(commands.Cog):
         patrolId: int,
         durationMinutes: int,
     ) -> None:
+        durationError = self._validatePatrolDuration(durationMinutes)
+        if durationError:
+            await interaction.response.send_message(durationError, ephemeral=True)
+            return
+
         lock = self._patrolLocks.setdefault(patrolId, asyncio.Lock())
         async with lock:
             # Guard against double-finalize clicks while one reviewer is still
@@ -508,7 +522,7 @@ class RecruitmentCog(commands.Cog):
                 return
 
             imageUrls = _evidenceLinks(evidenceMessage.attachments)
-            points = _patrolPoints(durationMinutes)
+            points = _groupPatrolPoints()
             submissionId = await recruitmentService.createRecruitmentTimeSubmission(
                 guildId=int(patrol["guildId"]),
                 channelId=int(patrol["channelId"]),
@@ -549,7 +563,11 @@ class RecruitmentCog(commands.Cog):
                 )
                 return
 
-            await recruitmentService.setRecruitmentTimeMessageId(submissionId, reviewMessage.id)
+            await recruitmentService.setRecruitmentTimeMessageId(
+                submissionId,
+                reviewMessage.id,
+                getattr(reviewMessage.channel, "id", None),
+            )
             await self._groupPatrolEngine.updateSessionStatus(int(patrolId), "FINISHED")
             if isinstance(interaction.message, discord.Message):
                 await self._deletePatrolClockinMessage(patrol, message=interaction.message)
@@ -664,7 +682,11 @@ class RecruitmentCog(commands.Cog):
             )
             return
 
-        await recruitmentService.setRecruitmentMessageId(submissionId, reviewMessage.id)
+        await recruitmentService.setRecruitmentMessageId(
+            submissionId,
+            reviewMessage.id,
+            getattr(reviewMessage.channel, "id", None),
+        )
         await interaction.followup.send(
             "Submitted recruitment log.",
             ephemeral=True,
@@ -735,7 +757,11 @@ class RecruitmentCog(commands.Cog):
                 ephemeral=True,
             )
             return
-        await recruitmentService.setRecruitmentTimeMessageId(submissionId, reviewMessage.id)
+        await recruitmentService.setRecruitmentTimeMessageId(
+            submissionId,
+            reviewMessage.id,
+            getattr(reviewMessage.channel, "id", None),
+        )
         await interaction.followup.send(
             "Submitted solo patrol log.",
             ephemeral=True,
@@ -757,9 +783,8 @@ class RecruitmentCog(commands.Cog):
             return
         embed = self._groupPatrolAdapter.buildEmbed(patrol, [])
         view = GroupPatrolView(self, patrolId)
-        try:
-            message = await interaction.channel.send(embed=embed, view=view)
-        except (discord.Forbidden, discord.HTTPException):
+        message = await interactionRuntime.safeChannelSend(interaction.channel, embed=embed, view=view)
+        if message is None:
             await interaction.followup.send(
                 "Could not create the patrol clock-in message in this channel.",
                 ephemeral=True,
@@ -789,6 +814,11 @@ class RecruitmentCog(commands.Cog):
                 "You do not have permission to submit patrol logs.",
                 ephemeral=True,
             )
+            return
+
+        durationError = self._validatePatrolDuration(durationMinutes)
+        if durationError:
+            await interaction.response.send_message(durationError, ephemeral=True)
             return
 
         await interaction.response.send_message(
@@ -850,9 +880,10 @@ class RecruitmentCog(commands.Cog):
             )
             return
 
-        if int(duration_minutes or 0) <= 0:
+        durationError = self._validatePatrolDuration(int(duration_minutes or 0))
+        if durationError:
             await interaction.response.send_message(
-                "Duration must be greater than 0 minutes.",
+                durationError,
                 ephemeral=True,
             )
             return

@@ -37,15 +37,11 @@ async def refreshReviewCard(
 
     channel = cog.bot.get_channel(reviewChannelId)
     if channel is None:
-        try:
-            channel = await cog.bot.fetch_channel(reviewChannelId)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return
+        channel = await interactionRuntime.safeFetchChannel(cog.bot, reviewChannelId)
     if not isinstance(channel, (discord.TextChannel, discord.Thread)):
         return
-    try:
-        message = await channel.fetch_message(reviewMessageId)
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+    message = await interactionRuntime.safeFetchMessage(channel, reviewMessageId)
+    if message is None:
         return
 
     workflowSummary = await applicationsWorkflowBridge.getApplicationWorkflowSummary(application)
@@ -65,10 +61,7 @@ async def refreshReviewCard(
         disableAll = getattr(view, "disableAll", None)
         if callable(disableAll):
             disableAll()
-    try:
-        await message.edit(embed=embed, view=view)
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-        return
+    await interactionRuntime.safeMessageEdit(message, embed=embed, view=view)
 
 
 async def handleApplicantAnswerButton(

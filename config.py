@@ -1,5 +1,3 @@
-# Reaction roles by idkpine
-
 from __future__ import annotations
 
 import os
@@ -80,8 +78,18 @@ permissionSimulatorGuildIds = []
 sessionMessageUpdateDebounceSec = 0.75
 runtimeBudgetRobloxConcurrency = 6
 runtimeBudgetSheetsConcurrency = 2
+runtimeBudgetInteractiveSheetsConcurrency = 2
+runtimeBudgetBackgroundSheetsConcurrency = 1
 runtimeBudgetDiscordConcurrency = 6
+runtimeBudgetInteractionAckConcurrency = 24
 runtimeBudgetBackgroundConcurrency = 2
+runtimeTaskStatsPath = "runtime/data/task-stats.json"
+runtimeTaskStatsFlushIntervalSec = 30
+runtimeTaskStatsFlushDirtyCount = 25
+discordEntityCacheTtlSec = 300
+bgQueueUpdateConcurrency = 2
+sessionMessageUpdateConcurrency = 2
+bgQueueRepostConcurrency = 1
 retryQueuePollIntervalSec = 6
 webhookHealthCheckIntervalSec = 600
 generalErrorLogDir = ""
@@ -98,6 +106,8 @@ autoGitUpdateBranch = ""
 autoGitUpdateCheckIntervalSec = 60
 autoGitUpdateInitialDelaySec = 120
 autoGitUpdatePauseDrainSec = 5
+autoGitUpdateInstallRequirements = _envFlag("JANE_INSTALL_REQUIREMENTS_ON_UPDATE", True)
+autoGitUpdateDependencyInstallTimeoutSec = 600
 autoGitUpdatePreservePaths = [
     "backups/serverSnapshots",
     "backups/serverSnapshotsOffsite",
@@ -150,6 +160,10 @@ recruitmentReviewerPingRoleId = 0
 anrorsMemberRoleId = 0  # ANRO Recruitment Services
 anrorsRmPlusRoleId = 0  # ANRORS RM+
 
+# Honor Guard roles.
+honorGuardReviewerRoleId = 0
+honorGuardReviewerPingRoleId = 0
+
 # ANRD role placeholders (for future role -> ORBAT rank sync).
 anrdRoleProbationaryId = 0
 anrdRoleContributorId = 0
@@ -189,16 +203,31 @@ bgCheckSpreadsheetFolderId = _envText(
     "",
 )
 bgCheckSpreadsheetSheetName = _envText("BGC_SPREADSHEET_SHEET_NAME", "Sheet1")
+bgItemReviewQueueEnabled = True
+bgItemReviewQueueChannelId = 0
+bgItemReviewReviewerRoleId = bgReviewModeratorRoleId
+bgItemReviewWebhookName = "Jane BG Item Review"
+bgItemReviewMaxPagesPerType = 4
+bgItemReviewCandidateLimit = 60
+bgItemReviewSpreadsheetSyncEnabled = True
+bgItemReviewSpreadsheetSyncIntervalSec = 300
+bgItemReviewSpreadsheetStartupLookbackDays = 5
+bgItemReviewSpreadsheetRecurringLookbackDays = 1
+bgItemReviewSpreadsheetSyncScanLimit = 10
+bgItemReviewSpreadsheetSyncMaxRows = 250
 bgRiskScoreBase = 20
 bgRiskScoreFloor = 5
 bgIntelligenceFetchGroupsEnabled = True
 bgIntelligenceFetchConnectionsEnabled = True
+bgIntelligenceFetchUsernameHistoryEnabled = True
 bgIntelligenceFetchInventoryEnabled = True
 bgIntelligenceFetchGamepassesEnabled = True
 bgIntelligenceFetchBadgesEnabled = True
 bgIntelligenceFetchFavoriteGamesEnabled = True
 bgIntelligenceFetchOutfitsEnabled = True
 bgIntelligenceFetchBadgeHistoryEnabled = True
+bgIntelligenceKnownMemberAltDetectionEnabled = True
+bgIntelligenceFetchFriendIdsEnabled = True
 bgIntelligenceExternalSourcesEnabled = True
 bgIntelligenceTaseEnabled = True
 bgIntelligenceTaseApiBaseUrl = "https://api.tasebot.org"
@@ -208,24 +237,69 @@ bgIntelligenceMocoApiBaseUrl = "https://api.moco-co.org"
 bgIntelligenceMocoTimeoutSec = 10
 bgIntelligenceFavoriteGameMax = 25
 bgIntelligenceOutfitMax = 25
+bgIntelligenceUsernameHistoryMax = 50
+bgIntelligenceKnownMemberAltMatchLimit = 10
+bgIntelligenceKnownMemberAltCandidateLimit = 5000
+bgIntelligenceKnownMemberAltFuzzyEnabled = True
+bgIntelligenceKnownMemberAltFuzzyMinSimilarity = 0.9
+bgIntelligenceKnownMemberAltFuzzyMinLength = 5
+bgIntelligenceKnownMemberAltGroupOverlapMin = 2
+bgIntelligenceKnownMemberAltGroupOverlapMaxMemberCount = 50000
+bgIntelligenceKnownMemberAltFriendLimit = 200
+bgIntelligenceKnownMemberAltWords = [
+    "alt",
+    "alts",
+    "backup",
+    "backups",
+    "back_up",
+    "bak",
+    "bckup",
+    "spare",
+    "second",
+    "secondaccount",
+    "account",
+    "acct",
+    "acc",
+    "clone",
+    "copy",
+    "new",
+    "old",
+    "main",
+    "again",
+]
 bgIntelligenceInventoryMaxPages = 0
 bgIntelligenceInventoryHardMaxPages = 100
 bgIntelligencePublicInventoryMaxPagesPerType = 10
+bgIntelligenceInventoryFuzzyMatchingEnabled = True
+bgIntelligenceInventoryFuzzyScoreCutoff = 92
+bgIntelligenceInventoryFuzzyMinKeywordLength = 6
+bgIntelligenceInventoryVisualMatchingEnabled = True
+bgIntelligenceInventoryVisualCandidateLimit = 120
+bgIntelligenceInventoryVisualReferenceLimit = 80
+bgIntelligenceInventoryVisualHashDistanceMax = 3
+bgIntelligenceInventoryVisualHashSize = 8
 bgIntelligenceGamepassMaxPages = 0
 bgIntelligenceGamepassHardMaxPages = 100
 bgIntelligenceBadgeHistoryPageSize = 100
 bgIntelligenceBadgeHistoryMaxPages = 0
 bgIntelligenceBadgeHistoryHardMaxPages = 100
 bgIntelligencePrivateInventoryDmEnabled = True
+bgIntelligenceReportRetentionHours = 24
+bgIntelligenceReportIndexRetentionDays = 90
+bgIntelligenceIdentityGraphRetentionDays = 365
+bgIntelligenceReportPruneCheckIntervalSec = 3600
 robloxApiCacheMaxEntries = 5000
 robloxProfileCacheTtlSec = 86400
 robloxGroupCacheTtlSec = 3600
 robloxConnectionCacheTtlSec = 3600
+robloxFriendListCacheTtlSec = 3600
 robloxFavoriteGamesCacheTtlSec = 3600
 robloxOutfitCacheTtlSec = 3600
 robloxInventoryValueCacheTtlSec = 21600
 robloxGamepassCacheTtlSec = 21600
 robloxAssetPriceCacheTtlSec = 86400
+robloxAssetThumbnailCacheTtlSec = 86400
+robloxAssetThumbnailHashCacheTtlSec = 86400
 robloxGamepassProductCacheTtlSec = 86400
 robloxBadgeHistoryCacheTtlSec = 86400
 robloxBadgeAwardCacheTtlSec = 86400
@@ -238,11 +312,146 @@ bgFailureForumChannelId = 0
 # Training log mirror and John event ingest.
 johnTrainingLogChannelId = 0
 trainingArchiveChannelId = johnTrainingLogChannelId
-trainingLogBackfillDays = 365
+trainingLogBackfillDays = 2
+trainingLogStartupSyncDelaySec = 20
+orbatStartupMaintenanceDelaySec = 45
 trainingSummaryWebhookName = "Jane Training Summary"
 trainingMirrorWebhookName = "Jane Training Log"
 johnEventLogChannelId = 0
 johnClankerBotId = 0
+
+honorGuardEnabled = False
+honorGuardCommandGuildIds = []
+honorGuardReviewChannelId = 0
+honorGuardLogChannelId = 0
+honorGuardArchiveChannelId = 0
+honorGuardSpreadsheetId = _envText(
+    "HONOR_GUARD_SPREADSHEET_ID",
+    "1aLD68JNA2nRjTxG1c3DZOtb_DPRXE4uNKN7ZxpKo_0k",
+)
+honorGuardMemberSheetName = "Main"
+honorGuardScheduleSheetName = "Event Scheduling"
+honorGuardArchiveSheetName = "Event Archive"
+honorGuardEventHostsSheetName = "Event Hosts"
+honorGuardCredentialsPathEnvVar = "ORBAT_GOOGLE_CREDENTIALS_PATH"
+honorGuardCredentialsPathConfigKey = "orbatGoogleCredentialsPath"
+
+# Honor Guard member sheet columns.
+honorGuardDiscordIdColumn = ""
+honorGuardRobloxUsernameColumn = "A"
+honorGuardRankColumn = "B"
+honorGuardActivityStatusColumn = "H"
+honorGuardQuotaPointsColumn = "E"
+honorGuardPromotionEventPointsColumn = "K"
+honorGuardPromotionAwardedPointsColumn = "L"
+honorGuardPromotionTotalPointsColumn = ""
+honorGuardHostedEventsColumn = ""
+honorGuardJuniorExamPassedColumn = "N"
+honorGuardNcoExamPassedColumn = "O"
+honorGuardQuotaCompleteFormulaColumn = "G"
+honorGuardPromotionEligibleFormulaColumn = "P"
+honorGuardStrikesColumn = "Q"
+
+# Honor Guard schedule/archive sheet columns.
+honorGuardScheduleEventIdColumn = ""
+honorGuardScheduleEventTypeColumn = "A"
+honorGuardScheduleEventTimeColumn = "B"
+honorGuardScheduleHostColumn = "C"
+honorGuardScheduleCoHostsColumn = "D"
+honorGuardScheduleSupervisorsColumn = "E"
+honorGuardScheduleEventDetailColumn = "F"
+honorGuardScheduleNotesColumn = "G"
+honorGuardScheduleStatusColumn = ""
+honorGuardArchiveColumns = [
+    "eventType",
+    "eventTimeUtc",
+    "host",
+    "coHosts",
+    "supervisors",
+    "eventDuration",
+    "eventDetail",
+    "notes",
+]
+honorGuardEventHostUsernameColumn = "A"
+honorGuardEventHostTotalEventsColumn = "F"
+honorGuardEventHostExamsColumn = "G"
+honorGuardEventHostTrainingsColumn = "H"
+honorGuardEventHostTryoutsColumn = "I"
+honorGuardEventHostInspectionsColumn = "J"
+honorGuardEventHostEventTypeColumns = {
+    "jge": honorGuardEventHostExamsColumn,
+    "junior guardsman exam": honorGuardEventHostExamsColumn,
+    "nco_exam": honorGuardEventHostExamsColumn,
+    "nco exam": honorGuardEventHostExamsColumn,
+    "orientation": honorGuardEventHostTrainingsColumn,
+    "training": honorGuardEventHostTrainingsColumn,
+    "lecture": honorGuardEventHostTrainingsColumn,
+    "drill": honorGuardEventHostTrainingsColumn,
+    "tryout": honorGuardEventHostTryoutsColumn,
+    "honor guard tryout": honorGuardEventHostTryoutsColumn,
+    "inspection": honorGuardEventHostInspectionsColumn,
+    "mock inspection": honorGuardEventHostInspectionsColumn,
+}
+
+# Honor Guard ranks and point rules.
+honorGuardEnlistedRanks = [
+    "Jr Guardsman",
+    "Junior Guardsman",
+    "Guardsman",
+]
+honorGuardNcoRanks = [
+    "Sr Guardsman",
+    "Senior Guardsman",
+    "Patrol Sergeant",
+]
+honorGuardOfficerRanks = [
+    "Parade Officer",
+    "Senior Parade Officer",
+    "Honor Guard Officer",
+    "Commanding Officer",
+]
+honorGuardExcuseStatusValues = [
+    "Excused",
+    "LoA",
+    "LOA",
+    "Retired",
+    "N/A",
+    "New",
+]
+honorGuardBiweeklyQuotaPointsRequired = 4
+honorGuardEarlyActiveQuotaPoints = 8
+honorGuardSentryDutyMinutesRequired = 30
+honorGuardSentryDutyQuotaPoints = 1
+honorGuardSentryDutyPromotionPoints = 1
+honorGuardAttendanceQuotaPointsByEventType = {
+    "gamenight": 0.5,
+}
+honorGuardAttendancePromotionPointsByEventType = {
+    "inspection": 8,
+    "sentry": 1,
+}
+honorGuardOfficerHostPromotionPointsByEventType = {
+    "gamenight": 1,
+    "orientation": 2,
+    "training": 3,
+    "lecture": 3,
+    "tryout": 6,
+    "inspection": 8,
+}
+honorGuardOfficerSupervisorPromotionPointsByEventType = {
+    "orientation": 2,
+}
+honorGuardOfficerCohostPromotionPointsByEventType = {
+    "inspection": 8,
+}
+honorGuardJgePointsPerGradedAttendee = 0.75
+honorGuardNcoExamPointsPerGradedAttendee = 1.5
+honorGuardNcoExamScreenAssistPoints = 2
+
+
+# == Internal Link Hub ==
+masterLinkHubManagerRoleIds = []
+masterLinkHubWebhookName = "Jane Master Directory"
 
 
 # == Public Utility / Suggestions ==
@@ -341,7 +550,7 @@ recruitmentSpreadsheetId = 0
 deptSpreadsheetId = 0
 
 # Department ORBAT layouts live in a separate JSON file.
-departmentOrbatLayoutsPath = "departmentOrbat/layouts.json"
+departmentOrbatLayoutsPath = "features/staff/departmentOrbat/layouts.json"
 
 # ORBAT submit / review access.
 orbatSubmitterRoleIds = []
@@ -530,6 +739,17 @@ multiOrbatSheets = [
                 "total": orbatColumnTotal,
                 "allTime": orbatColumnAllTime,
             },
+            "profileColumns": {
+                "rank": orbatColumnRank,
+                "clearance": orbatColumnClearance,
+                "status": orbatColumnStatus,
+                "loaInfo": orbatColumnLoaInfo,
+                "department": orbatColumnDepartment,
+                "notes": orbatColumnNotes,
+                "mic": orbatColumnMic,
+                "timezone": orbatColumnTimezone,
+                "ageGroup": orbatColumnAgeGroup,
+            },
         },
         "organization": {
             "enabled": True,
@@ -552,9 +772,82 @@ multiOrbatSheets = [
                 "allTime": "E",
                 "patrols": "F",
             },
+            "profileColumns": {
+                "rank": "C",
+                "quota": "G",
+                "status": "H",
+                "loaExpiration": "I",
+                "notes": "J",
+            },
         },
         "organization": {
             "enabled": True,
+            "supportsSectionHeaders": True,
+        },
+    },
+    {
+        "key": "honorGuard_members",
+        "displayName": "Honor Guard ORBAT",
+        "spreadsheetId": honorGuardSpreadsheetId,
+        "sheetName": honorGuardMemberSheetName,
+        "credentialsPathEnvVar": honorGuardCredentialsPathEnvVar,
+        "credentialsPathConfigKey": honorGuardCredentialsPathConfigKey,
+        "rowModel": {
+            "identity": {
+                "discordIdColumn": honorGuardDiscordIdColumn,
+                "robloxUserColumn": honorGuardRobloxUsernameColumn,
+            },
+            "pointColumns": {
+                "quota": honorGuardQuotaPointsColumn,
+                "promotionEvent": honorGuardPromotionEventPointsColumn,
+                "promotionAwarded": honorGuardPromotionAwardedPointsColumn,
+                "promotionTotal": honorGuardPromotionTotalPointsColumn,
+                "hostedEvents": honorGuardHostedEventsColumn,
+            },
+            "profileColumns": {
+                "rank": honorGuardRankColumn,
+                "status": honorGuardActivityStatusColumn,
+                "quotaStatus": honorGuardQuotaCompleteFormulaColumn,
+            },
+        },
+        "organization": {
+            "enabled": honorGuardEnabled,
+            "supportsSectionHeaders": True,
+        },
+    },
+    {
+        "key": "honorGuard_schedule",
+        "displayName": "Honor Guard Event Schedule",
+        "spreadsheetId": honorGuardSpreadsheetId,
+        "sheetName": honorGuardScheduleSheetName,
+        "credentialsPathEnvVar": honorGuardCredentialsPathEnvVar,
+        "credentialsPathConfigKey": honorGuardCredentialsPathConfigKey,
+        "organization": {
+            "enabled": honorGuardEnabled,
+            "supportsSectionHeaders": False,
+        },
+    },
+    {
+        "key": "honorGuard_archive",
+        "displayName": "Honor Guard Event Archive",
+        "spreadsheetId": honorGuardSpreadsheetId,
+        "sheetName": honorGuardArchiveSheetName,
+        "credentialsPathEnvVar": honorGuardCredentialsPathEnvVar,
+        "credentialsPathConfigKey": honorGuardCredentialsPathConfigKey,
+        "organization": {
+            "enabled": honorGuardEnabled,
+            "supportsSectionHeaders": False,
+        },
+    },
+    {
+        "key": "honorGuard_eventHosts",
+        "displayName": "Honor Guard Event Hosts",
+        "spreadsheetId": honorGuardSpreadsheetId,
+        "sheetName": honorGuardEventHostsSheetName,
+        "credentialsPathEnvVar": honorGuardCredentialsPathEnvVar,
+        "credentialsPathConfigKey": honorGuardCredentialsPathConfigKey,
+        "organization": {
+            "enabled": honorGuardEnabled,
             "supportsSectionHeaders": True,
         },
     },
@@ -589,6 +882,29 @@ googleSheetsMinRequestIntervalSec = 0.05
 googleSheetsMaxAttempts = 3
 googleSheetsRetryBaseSec = 1.5
 
+# Discord can occasionally 5xx during the first login/application_info call.
+# Retry only startup transport/server failures; invalid token/config errors still fail fast.
+discordStartupMaxAttempts = 6
+discordStartupRetryBaseSec = 15
+discordStartupRetryMaxDelaySec = 120
+
+# Temporary identity backfill command: !pairDbNames
+pairDbNamesSourceChannelId = 0
+pairDbNamesLookbackDays = 5
+pairDbNamesLookupConcurrency = 4
+pairDbNamesMaxLookups = 500
+pairDbNamesHistoryPageSize = 100
+pairDbNamesHistoryMaxAttempts = 5
+pairDbNamesHistoryRetryBaseSec = 2
+pairDbNamesHistoryRetryMaxDelaySec = 20
+
+# Local ORBAT mirror. This is a read-through cache of member rows, not the
+# source of truth for sheet edits.
+orbatMirrorEnabled = True
+orbatMirrorMaxRows = 800
+orbatMirrorMaxColumn = "AZ"
+orbatMirrorHeaderScanRows = 12
+
 
 # == Recruitment / ANRORS ==
 recruitmentChannelId = 0
@@ -605,6 +921,8 @@ recruitmentPatrolGroupHostRoleIds = []
 recruitmentPointsBase = 2
 recruitmentPointsOrientationBonus = 3
 recruitmentPointsPer15Minutes = 1
+recruitmentGroupPatrolPoints = 6
+recruitmentPatrolMaxDurationMinutes = 240
 recruitmentAutoDetectOrientation = True
 recruitmentDivisionKeyAliases = ["recruitment", "anrors"]
 
@@ -614,6 +932,7 @@ recruitmentPromoteSeniorToLeadAt = 20
 
 # New member defaults.
 recruitmentMembersRankOrder = [
+    "Recruitment Supervisor",
     "Lead Recruiter",
     "Senior Recruiter",
     "Recruiter",
@@ -629,11 +948,14 @@ recruitmentFooterRow = 0
 
 # Recruitment ORBAT ranks / sections.
 recruitmentAllowedRanks = [
+    "Commissioner 1 IC",
+    "Comissioner 1 IC",
     "Head Recruiter 1 IC",
     "Head Recruiter 2 IC",
     "Head Recruiter 3 IC",
     "Head Recruiter 4 IC",
     "Recruitment Manager",
+    "Recruitment Supervisor",
     "Lead Recruiter",
     "Senior Recruiter",
     "Recruiter",
@@ -643,6 +965,7 @@ recruitmentSectionHeaders = [
     "High Command",
     "Managers",
     "Employees",
+    "Quota not enforced (After 10th)",
     "Dept. Lead",
     "Members",
 ]
@@ -760,6 +1083,7 @@ roverApiKeyUseBearer = True
 roverVerifyUrl = "https://rover.link/verify"
 roverCacheTtlSec = 120
 roverCacheMaxEntries = 2000
+roverIdentityDbTimeoutSec = 1.5
 robloxHttpTimeoutSec = 10
 recruitmentRoverLookupConcurrency = 8
 

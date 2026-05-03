@@ -22,10 +22,10 @@ from features.staff.recruitment import (
 )
 from features.staff.trainingLog import trainingLogService
 from features.staff.sessions import (
-    roblox,
     service as sessionService,
     views as sessionViews,
 )
+from features.staff.sessions.Roblox import robloxTransport, robloxUsers
 from runtime import (
     auditStream as runtimeAuditStream,
     botProfile as runtimeBotProfile,
@@ -80,7 +80,9 @@ _lockedPrefixCommandTokens = {
     "?bg-leaderboard",
     "?perm-sim",
     "?permsim",
-    "?ruid"
+    "?ruid",
+    "?cpurgejane"
+    "!pairdbnames",
 }
 _manualTextCommandTokens = _lockedPrefixCommandTokens | {
     "!casinotoggle",
@@ -181,6 +183,7 @@ _errorCoordinator = runtimeErrors.ErrorCoordinator(
 _metricsExporter: runtimeMetricsExport.MetricsExporter | None = None
 _gamblingApiServer: runtimeGamblingApi.GamblingApiServer | None = None
 _trainingLogSyncTask: asyncio.Task | None = None
+_trainingLogCaptureTasks: dict[int, asyncio.Task] = {}
 _botProfileBioTask: asyncio.Task | None = None
 _botProfileBioStarted = False
 
@@ -304,6 +307,9 @@ _trainingLogCoordinator = trainingLogService.TrainingLogCoordinator(
 
 async def _runTrainingLogStartupSync() -> None:
     await botClient.wait_until_ready()
+    delaySec = max(0.0, float(getattr(config, "trainingLogStartupSyncDelaySec", 20) or 0))
+    if delaySec > 0:
+        await asyncio.sleep(delaySec)
     await _trainingLogCoordinator.ensureSummaryPanelAtBottom()
     maxAttempts = 3
     retryDelaySec = 30
@@ -347,6 +353,32 @@ def _startTrainingLogSyncTask() -> None:
             logging.exception("Training log backfill task crashed.")
 
     task.add_done_callback(_doneCallback)
+
+
+def _scheduleTrainingLogCapture(message: discord.Message) -> None:
+    if not _trainingLogCoordinator.shouldInspectSourceMessage(message):
+        return
+    try:
+        messageId = int(getattr(message, "id", 0) or 0)
+    except (TypeError, ValueError):
+        messageId = 0
+    if messageId <= 0:
+        return
+
+    async def _runner() -> None:
+        try:
+            await taskBudgeter.runBackground(lambda: _trainingLogCoordinator.handleSourceMessage(message))
+        except Exception:
+            logging.exception("Training log capture failed for message %s.", messageId)
+        finally:
+            current = _trainingLogCaptureTasks.get(messageId)
+            if current is asyncio.current_task():
+                _trainingLogCaptureTasks.pop(messageId, None)
+
+    _trainingLogCaptureTasks[messageId] = asyncio.create_task(
+        _runner(),
+        name=f"training-log-capture-{messageId}",
+    )
 
 
 def _startBotProfileBioTask() -> None:
@@ -722,6 +754,9 @@ def _getTextCommandRouter() -> runtimeTextCommands.TextCommandRouter:
 async def _handleUsernameToUserId(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handleUsernameToUserId(message)
 
+async def _handleChannelPurge(message: discord.Message) -> bool:
+    return await _getTextCommandRouter().handleChannelPurge(message)
+
 async def _handleJaneHelp(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handleJaneHelp(message)
 
@@ -760,6 +795,10 @@ async def _handleBgLeaderboardCommand(message: discord.Message) -> bool:
 
 async def _handlePermissionSimulatorCommand(message: discord.Message) -> bool:
     return await _getTextCommandRouter().handlePermissionSimulatorCommand(message)
+
+
+async def _handlePairDbNamesCommand(message: discord.Message) -> bool:
+    return await _getTextCommandRouter().handlePairDbNamesCommand(message)
 
 
 async def _handleTrainingStatsCommand(message: discord.Message) -> bool:
@@ -876,7 +915,6 @@ async def prefixCommandSafetyCheck(ctx: commands.Context) -> bool:
     return False
 
 
-@botClient.tree.interaction_check
 async def interactionSafetyCheck(interaction: discord.Interaction) -> bool:
     if interaction.type is not discord.InteractionType.application_command:
         return True
@@ -959,6 +997,9 @@ async def interactionSafetyCheck(interaction: discord.Interaction) -> bool:
     return True
 
 
+botClient.tree.interaction_check = interactionSafetyCheck
+
+
 @botClient.event
 async def on_app_command_completion(
     interaction: discord.Interaction,
@@ -1010,7 +1051,7 @@ async def on_close() -> None:
     await _webhookHealthWatcher.stop()
     await _retryQueue.stop()
     await _gamblingApiServer.stop()
-    await roblox.closeHttpSession()
+    await robloxTransport.closeHttpSession()
     await closeDb()
 
 async def _alreadyProcessedJohnLog(messageId: int) -> bool:
@@ -1052,11 +1093,12 @@ async def _handleIngestedEvent(
     category = str(event.payload.get("eventCategory") or "other").strip().lower()
     columnKey = "shifts" if category == "shift" else "otherEvents"
 
-    row = orbatSheets.incrementEventCount(hostId, columnKey, 1)
+    row = await taskBudgeter.runSheetsThread(orbatSheets.incrementEventCount, hostId, columnKey, 1)
     if row == 0:
-        lookup = await roblox.fetchRobloxUser(hostId)
+        lookup = await robloxUsers.fetchRobloxUser(hostId)
         if lookup.robloxUsername:
-            row = orbatSheets.incrementEventCount(
+            row = await taskBudgeter.runSheetsThread(
+                orbatSheets.incrementEventCount,
                 hostId,
                 columnKey,
                 1,
@@ -1079,10 +1121,7 @@ async def _processCommands(message: discord.Message) -> None:
 
 @botClient.event
 async def on_message(message: discord.Message) -> None:
-    try:
-        await _trainingLogCoordinator.handleSourceMessage(message)
-    except Exception:
-        logging.exception("Training log capture failed for message %s.", getattr(message, "id", 0))
+    _scheduleTrainingLogCapture(message)
     if not message.author.bot:
         _getTextCommandRouter().noteCopyServerWarningMessage(message)
     if _pauseController.isPaused():
@@ -1178,6 +1217,10 @@ async def on_message(message: discord.Message) -> None:
             return
         if await _handleUsernameToUserId(message):
             return
+        if await _handleChannelPurge(message):
+            return
+        if await _handlePairDbNamesCommand(message):
+            return
         if await _handleTrainingStatsCommand(message):
             return
         if await _handleJaneTerminal(message):
@@ -1212,10 +1255,7 @@ async def on_message(message: discord.Message) -> None:
 async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
     if int(getattr(before, "id", 0) or 0) != int(getattr(after, "id", 0) or 0):
         return
-    try:
-        await _trainingLogCoordinator.handleSourceMessage(after)
-    except Exception:
-        logging.exception("Training log capture failed for edited message %s.", getattr(after, "id", 0))
+    _scheduleTrainingLogCapture(after)
 
 @botClient.listen("on_interaction")
 async def handleRobloxRetry(interaction: discord.Interaction) -> None:
@@ -1240,6 +1280,66 @@ def has_utf8_bom(filepath):
     with open(filepath, 'rb') as f:
         header = f.read(3)
         return header.startswith(codecs.BOM_UTF8)
+
+
+def _discordStartupRetryConfig() -> tuple[int, float, float]:
+    try:
+        maxAttempts = int(getattr(config, "discordStartupMaxAttempts", 6) or 6)
+    except (TypeError, ValueError):
+        maxAttempts = 6
+    try:
+        baseDelaySec = float(getattr(config, "discordStartupRetryBaseSec", 15) or 15)
+    except (TypeError, ValueError):
+        baseDelaySec = 15.0
+    try:
+        maxDelaySec = float(getattr(config, "discordStartupRetryMaxDelaySec", 120) or 120)
+    except (TypeError, ValueError):
+        maxDelaySec = 120.0
+    return max(1, maxAttempts), max(0.0, baseDelaySec), max(0.0, maxDelaySec)
+
+
+def _isRetryableDiscordStartupError(exc: BaseException) -> bool:
+    if isinstance(exc, discord.DiscordServerError):
+        return True
+    if isinstance(exc, discord.HTTPException):
+        try:
+            status = int(getattr(exc, "status", 0) or 0)
+        except (TypeError, ValueError):
+            status = 0
+        return status in {500, 502, 503, 504}
+    if isinstance(exc, (ConnectionError, OSError, TimeoutError)):
+        return True
+    moduleName = exc.__class__.__module__
+    return moduleName.startswith("aiohttp.")
+
+
+def _runBotWithStartupRetry(token: str) -> None:
+    maxAttempts, baseDelaySec, maxDelaySec = _discordStartupRetryConfig()
+    attempt = 1
+    while True:
+        try:
+            botClient.run(token, log_handler=None)
+            return
+        except discord.LoginFailure:
+            raise
+        except discord.PrivilegedIntentsRequired:
+            raise
+        except Exception as exc:
+            if not _isRetryableDiscordStartupError(exc) or attempt >= maxAttempts:
+                raise
+            delaySec = min(maxDelaySec, baseDelaySec * (2 ** (attempt - 1)))
+            logging.warning(
+                "Discord startup failed with retryable %s on attempt %d/%d; retrying in %.1fs.",
+                exc.__class__.__name__,
+                attempt,
+                maxAttempts,
+                delaySec,
+            )
+            if botClient.is_closed():
+                botClient.clear()
+            attempt += 1
+            time.sleep(delaySec)
+
 
 if __name__ == "__main__":
     runtimeLoggingConsole.configureConsoleLogging(level=logging.INFO)
@@ -1266,7 +1366,7 @@ if __name__ == "__main__":
         runtimeProcessControl.clearRestartRequest()
     restartRequested = False
     try:
-        botClient.run(token, log_handler=None)
+        _runBotWithStartupRetry(token)
         restartRequested = bool(runtimeProcessControl is not None and runtimeProcessControl.restartRequested())
     finally:
         _singleInstanceLock.release()

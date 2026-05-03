@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import discord
 from discord import ui
+from runtime import interaction as interactionRuntime
 
 log = logging.getLogger(__name__)
 
@@ -122,10 +123,7 @@ async def _disableRobloxRetryButton(interaction: discord.Interaction, sessionId:
     view = RobloxJoinRetryView(sessionId)
     for child in view.children:
         child.disabled = True
-    try:
-        await interaction.message.edit(view=view)
-    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-        return
+    await interactionRuntime.safeMessageEdit(interaction.message, view=view)
 
 
 async def _disableInventoryRetryButton(
@@ -138,10 +136,7 @@ async def _disableInventoryRetryButton(
     view = InventoryRetryView(sessionId, userId)
     for child in view.children:
         child.disabled = True
-    try:
-        await interaction.message.edit(view=view)
-    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-        return
+    await interactionRuntime.safeMessageEdit(interaction.message, view=view)
 
 
 async def sendInventoryPrivateDm(bot: discord.Client, sessionId: int, userId: int) -> None:

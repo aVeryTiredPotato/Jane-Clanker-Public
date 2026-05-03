@@ -21,6 +21,8 @@ class SessionsCog(commands.Cog):
         )
 
     def canStart(self, member: discord.Member) -> bool:
+        if runtimePermissions.hasApprovedAdminOverride(member):
+            return True
         if config.instructorRoleId is None:
             return True
         return any(r.id == config.instructorRoleId for r in member.roles)

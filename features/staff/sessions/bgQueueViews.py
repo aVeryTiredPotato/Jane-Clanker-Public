@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Optional
 
 import discord
 from discord import ui
 from features.staff.sessions import bgBuckets
+from runtime import interaction as interactionRuntime
 
 log = logging.getLogger(__name__)
 
@@ -142,12 +142,11 @@ class BgAttendeeReviewView(ui.View):
             self.stop()
             for child in self.children:
                 child.disabled = True
-            try:
-                await interaction.message.edit(
-                    content="This attendee is no longer present in the background-check queue.",
-                    view=self,
-                )
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            if not await interactionRuntime.safeMessageEdit(
+                interaction.message,
+                content="This attendee is no longer present in the background-check queue.",
+                view=self,
+            ):
                 await _dep("safeInteractionReply")(
                     interaction,
                     content="This attendee panel is no longer available.",
@@ -160,9 +159,7 @@ class BgAttendeeReviewView(ui.View):
             reviewBucket=self.reviewBucket,
             claimOwnerId=_dep("getBgClaimOwnerId")(self.sessionId, self.targetUserId),
         )
-        try:
-            await interaction.message.edit(embed=embed, view=self)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        if not await interactionRuntime.safeMessageEdit(interaction.message, embed=embed, view=self):
             await _dep("safeInteractionReply")(
                 interaction,
                 content="This attendee panel is no longer available.",
@@ -181,58 +178,18 @@ class BgAttendeeReviewView(ui.View):
             )
             return
 
-        await _dep("safeInteractionDefer")(interaction, ephemeral=True)
-        statusChanged = await _dep("service").setBgStatusWithReviewer(
+        result = await _dep("applyBgDecision")(
+            interaction,
             self.sessionId,
             self.targetUserId,
             newStatus,
-            int(interaction.user.id),
+            reviewBucket=self.reviewBucket,
+            defer=True,
         )
-        _dep("clearBgClaim")(self.sessionId, self.targetUserId)
-        session = await _dep("service").getSession(self.sessionId)
-        sessionType = (session or {}).get("sessionType")
-        sessionGuild = _dep("sessionGuild")(interaction.client, session, interaction.guild)
-        if newStatus == "REJECTED" and statusChanged:
-            asyncio.create_task(
-                _dep("postBgFailureForumEntry")(
-                    interaction.client,
-                    sessionGuild,
-                    self.targetUserId,
-                    int(interaction.user.id),
-                )
-            )
-        if sessionType in {"orientation", "bg-check"}:
-            await _dep("setPendingBgRole")(sessionGuild, self.targetUserId, False)
-        if newStatus == "APPROVED":
-            if sessionType == "orientation":
-                await _dep("service").awardHostPointIfEligible(self.sessionId, self.targetUserId)
-            asyncio.create_task(
-                _dep("maybeAutoAcceptRoblox")(
-                    interaction.client,
-                    sessionGuild,
-                    self.sessionId,
-                    self.targetUserId,
-                )
-            )
-            asyncio.create_task(
-                _dep("sendRobloxJoinRequestDm")(interaction.client, self.sessionId, self.targetUserId)
-            )
-            if sessionType == "orientation":
-                asyncio.create_task(
-                    _dep("applyRecruitmentOrientationBonus")(
-                        interaction.client,
-                        self.targetUserId,
-                    )
-                )
-
-        await _dep("updateSessionMessage")(interaction.client, self.sessionId)
-        await _dep("requestBgQueueMessageUpdate")(interaction.client, self.sessionId)
-        await _dep("maybeNotifyBgComplete")(interaction, self.sessionId)
         await self._refreshMessage(interaction)
-        statusText = "Approved" if newStatus == "APPROVED" else "Rejected"
         await _dep("safeInteractionReply")(
             interaction,
-            f"{statusText} <@{self.targetUserId}>.",
+            f"{result.statusText} <@{self.targetUserId}>.",
             ephemeral=True,
         )
 
@@ -365,7 +322,7 @@ class BgQueueView(ui.View):
             for child in self.children:
                 child.disabled = True
             if interaction.message:
-                await interaction.message.edit(view=self)
+                await interactionRuntime.safeMessageEdit(interaction.message, view=self)
             await _dep("safeInteractionReply")(
                 interaction,
                 "No background checks are required for this session.",
@@ -478,11 +435,8 @@ class BgQueueForceCloseConfirmView(ui.View):
         )
         for child in self.children:
             child.disabled = True
-        try:
-            if interaction.message:
-                await interaction.message.edit(view=self)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            pass
+        if interaction.message:
+            await interactionRuntime.safeMessageEdit(interaction.message, view=self)
         await _dep("safeInteractionReply")(
             interaction,
             (

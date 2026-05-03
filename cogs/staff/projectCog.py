@@ -17,6 +17,7 @@ from runtime import commandScopes as runtimeCommandScopes
 from runtime import interaction as interactionRuntime
 from runtime import normalization
 from runtime import permissions as runtimePermissions
+from runtime import taskBudgeter
 from runtime import textFormatting as textFormattingRuntime
 
 log = logging.getLogger(__name__)
@@ -227,26 +228,17 @@ class ProjectCog(commands.Cog):
             return None
         channel = self.bot.get_channel(channelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channelId)
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException, discord.InvalidData):
-                return None
+            channel = await interactionRuntime.safeFetchChannel(self.bot, channelId)
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return None
-        try:
-            return await channel.fetch_message(messageId)
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            return None
+        return await interactionRuntime.safeFetchMessage(channel, messageId)
 
     async def _syncProjectMessage(self, row: dict) -> None:
         message = await self._resolveProjectMessage(row)
         if message is None:
             return
         embed = await self._buildProjectEmbed(row)
-        try:
-            await message.edit(embed=embed)
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            return
+        await interactionRuntime.safeMessageEdit(message, embed=embed)
 
     async def _postThreadUpdate(self, row: dict, content: str) -> None:
         threadId = _toPositiveInt(row.get("threadId"))
@@ -254,16 +246,10 @@ class ProjectCog(commands.Cog):
             return
         thread = self.bot.get_channel(threadId)
         if thread is None:
-            try:
-                thread = await self.bot.fetch_channel(threadId)
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException, discord.InvalidData):
-                return
+            thread = await interactionRuntime.safeFetchChannel(self.bot, threadId)
         if not isinstance(thread, discord.Thread):
             return
-        try:
-            await thread.send(content=content)
-        except (discord.Forbidden, discord.HTTPException):
-            return
+        await interactionRuntime.safeChannelSend(thread, content=content)
 
     async def _logProjectAction(
         self,
@@ -299,10 +285,7 @@ class ProjectCog(commands.Cog):
             return
         channel = self.bot.get_channel(logChannelId)
         if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(logChannelId)
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException, discord.InvalidData):
-                return
+            channel = await interactionRuntime.safeFetchChannel(self.bot, logChannelId)
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return
         embed = discord.Embed(
@@ -318,10 +301,7 @@ class ProjectCog(commands.Cog):
         if details:
             lines = [f"- **{key}**: {value}" for key, value in details.items()]
             embed.add_field(name="Details", value=_clip("\n".join(lines), 1024), inline=False)
-        try:
-            await channel.send(embed=embed)
-        except (discord.Forbidden, discord.HTTPException):
-            return
+        await interactionRuntime.safeChannelSend(channel, embed=embed)
 
     async def _appendHistory(
         self,
@@ -373,6 +353,7 @@ class ProjectCog(commands.Cog):
             return await self._safeEphemeral(interaction, "This command can only be used in a server.")
         if not await self._ensureProjectGuildAllowed(interaction):
             return
+        await interactionRuntime.safeInteractionDefer(interaction, ephemeral=True, thinking=True)
 
         channelId = _toPositiveInt(getattr(interaction.channel, "id", 0))
         projectId = await projectService.createProject(
@@ -404,12 +385,13 @@ class ProjectCog(commands.Cog):
             if hodMentions
             else "New project pending HOD approval."
         )
-        try:
-            reviewMessage = await channel.send(
-                content=createMessageContent,
-                embed=await self._buildProjectEmbed(row),
-                allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
-            )
+        reviewMessage = await interactionRuntime.safeChannelSend(
+            channel,
+            content=createMessageContent,
+            embed=await self._buildProjectEmbed(row),
+            allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+        )
+        if reviewMessage is not None:
             await projectService.setProjectReviewMessage(
                 projectId=projectId,
                 reviewChannelId=_toPositiveInt(getattr(channel, "id", 0)),
@@ -426,8 +408,6 @@ class ProjectCog(commands.Cog):
                     allowNoopEvent=True,
                 )
                 await self._syncProjectMessage(routedRow)
-        except (discord.Forbidden, discord.HTTPException):
-            reviewMessage = None
 
         createdThread: Optional[discord.Thread] = None
         if (
@@ -444,20 +424,20 @@ class ProjectCog(commands.Cog):
                 slug = f"project-{projectId}"
             threadName = f"{slug[:70]}-{projectId}"
             try:
-                createdThread = await reviewMessage.create_thread(
-                    name=threadName[:100],
-                    auto_archive_duration=10080,
+                createdThread = await taskBudgeter.runDiscord(
+                    lambda: reviewMessage.create_thread(
+                        name=threadName[:100],
+                        auto_archive_duration=10080,
+                    )
                 )
             except (discord.Forbidden, discord.HTTPException):
                 createdThread = None
             if createdThread is not None:
                 await projectService.setProjectThreadId(projectId, int(createdThread.id))
-                try:
-                    await createdThread.send(
-                        f"Project thread opened for **#{projectId}** by <@{int(interaction.user.id)}>."
-                    )
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
+                await interactionRuntime.safeChannelSend(
+                    createdThread,
+                    content=f"Project thread opened for **#{projectId}** by <@{int(interaction.user.id)}>.",
+                )
 
         await projectService.appendProjectHistory(
             projectId=projectId,

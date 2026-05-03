@@ -1,6 +1,7 @@
 ﻿from typing import Any, Optional, Dict
 
 import config
+from features.staff.recruitment import sheetRules
 from features.staff.orbat.a1 import cellRange, columnIndex, indexToColumn
 from features.staff.orbat.engineFacade import createEngineServiceFacade
 from features.staff.orbat.multiEngine import getMultiOrbatEngine
@@ -29,24 +30,30 @@ def _sheetName() -> str:
     return _engine.getSheetName(_recruitmentSheetKey)
 
 
-def _normalize(value: str) -> str:
-    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
-
-
-def _cleanRobloxUsername(value: Any) -> str:
-    text = str(value or "").strip()
-    for marker in ("\u200b", "\u200c", "\u200d", "\ufeff"):
-        text = text.replace(marker, "")
-    return "".join(ch for ch in text if not ch.isspace())
-
-
-def _usernameLookupKey(value: Any) -> str:
-    return _cleanRobloxUsername(value).casefold()
-
-
-def _usernameSortTuple(value: Any) -> tuple[str, str]:
-    raw = _cleanRobloxUsername(value)
-    return (_normalize(raw), raw.casefold())
+_normalize = sheetRules.normalize
+_cleanRobloxUsername = sheetRules.cleanRobloxUsername
+_usernameLookupKey = sheetRules.usernameLookupKey
+_usernameSortTuple = sheetRules.usernameSortTuple
+_toInt = sheetRules.toInt
+_toBool = sheetRules.toBool
+_isRecruitmentMemberLabel = sheetRules.isRecruitmentMemberLabel
+_isAllowedRecruitmentRank = sheetRules.isAllowedRecruitmentRank
+_isWritableMemberRow = sheetRules.isWritableMemberRow
+_findSectionHeaderRow = sheetRules.findSectionHeaderRow
+_membersSectionHeaderCandidates = sheetRules.membersSectionHeaderCandidates
+_findMembersSectionHeaderRow = sheetRules.findMembersSectionHeaderRow
+_sectionBoundsByHeader = sheetRules.sectionBoundsByHeader
+_sectionHeaderRows = sheetRules.sectionHeaderRows
+_detectFooterRow = sheetRules.detectFooterRow
+_membersRankOrderMap = sheetRules.membersRankOrderMap
+_isMembersRank = sheetRules.isMembersRank
+_isHighCommandRank = sheetRules.isHighCommandRank
+_isManagerRank = sheetRules.isManagerRank
+_normalizeQuotaStatus = sheetRules.normalizeQuotaStatus
+_computeQuotaStatus = sheetRules.computeQuotaStatus
+_resolveConfiguredRankLabel = sheetRules.resolveConfiguredRankLabel
+_nextPromotionRank = sheetRules.nextPromotionRank
+_sectionInsertRow = sheetRules.sectionInsertRow
 
 
 def _columnLetter(index1: int) -> str:
@@ -63,18 +70,6 @@ def _indexToColumn(index1: int) -> str:
 
 def _range(col: str, row: int) -> str:
     return cellRange(_sheetName(), col, row)
-
-
-def _toInt(value) -> int:
-    try:
-        return int(float(str(value).strip()))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _toBool(value) -> bool:
-    text = str(value or "").strip().lower()
-    return text in {"true", "yes", "1", "y"}
 
 
 def _fillEmptyCellsWithZero(
@@ -319,49 +314,6 @@ def _applyCheckboxValidation(
     return 0
 
 
-def _isRecruitmentMemberLabel(value: str) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return False
-    normalized = _normalize(text)
-    if normalized in {"robloxusername", "robloxuser", "ruser"}:
-        return False
-    lowered = text.lower()
-    if "personnel" in lowered:
-        return False
-    sectionHeaders = {
-        _normalize(item) for item in getattr(config, "recruitmentSectionHeaders", []) if item
-    }
-    if normalized in sectionHeaders:
-        return False
-    return True
-
-
-def _isAllowedRecruitmentRank(value: str) -> bool:
-    rank = str(value or "").strip()
-    if not rank:
-        return False
-    allowed = getattr(config, "recruitmentAllowedRanks", []) or []
-    allowedSet = {_normalize(item) for item in allowed if item}
-    if not allowedSet:
-        # Fallback for older configs that do not define recruitmentAllowedRanks.
-        allowedSet = {
-            _normalize("Head Recruiter 1 IC"),
-            _normalize("Head Recruiter 2 IC"),
-            _normalize("Head Recruiter 3 IC"),
-            _normalize("Head Recruiter 4 IC"),
-            _normalize("Recruitment Manager"),
-            _normalize("Lead Recruiter"),
-            _normalize("Senior Recruiter"),
-            _normalize("Recruiter"),
-        }
-    return _normalize(rank) in allowedSet
-
-
-def _isWritableMemberRow(usernameCell: str, rankCell: str) -> bool:
-    return _isRecruitmentMemberLabel(usernameCell) and _isAllowedRecruitmentRank(rankCell)
-
-
 def _getMembersSectionBounds(
     service,
     usernameCol: str,
@@ -376,16 +328,15 @@ def _getMembersSectionBounds(
     membersHeaderRow = _findMembersSectionHeaderRow(usernames)
     if not membersHeaderRow:
         return None
-    footerRow = _detectFooterRow(usernames)
-    startRow = membersHeaderRow + 1
-    # Preserve the blank spacer row directly under section headers.
-    if startRow - 1 < len(usernames):
-        spacerCell = str((usernames[startRow - 1] or [""])[0]).strip() if usernames[startRow - 1] else ""
-        if not spacerCell:
-            startRow += 1
-    endRow = footerRow - 1
-    if endRow < startRow:
+
+    bounds: Optional[tuple[int, int]] = None
+    for sectionName in _membersSectionHeaderCandidates():
+        bounds = _sectionBoundsByHeader(usernames, sectionName)
+        if bounds:
+            break
+    if not bounds:
         return None
+    startRow, endRow = bounds
     return usernames, startRow, endRow
 
 
@@ -430,96 +381,6 @@ def _trimTrailingNonMemberRows(
     if trimmedEndRow < startRow:
         return usernames, startRow, startRow - 1
     return usernames, startRow, trimmedEndRow
-
-
-def _findSectionHeaderRow(usernames: list, sectionName: str) -> Optional[int]:
-    target = _normalize(sectionName)
-    for rowIndex, row in enumerate(usernames, start=1):
-        cell = str(row[0]).strip() if row else ""
-        if _normalize(cell) == target:
-            return rowIndex
-    return None
-
-
-def _membersSectionHeaderCandidates() -> list[str]:
-    configured = getattr(config, "recruitmentMembersSectionHeaderCandidates", None)
-    if isinstance(configured, (list, tuple)):
-        out = [str(item).strip() for item in configured if str(item).strip()]
-        if out:
-            return out
-    single = str(getattr(config, "recruitmentMembersSectionHeader", "") or "").strip()
-    if single:
-        return [single, "Members"]
-    return ["Employees", "Members"]
-
-
-def _findMembersSectionHeaderRow(usernames: list) -> Optional[int]:
-    for sectionName in _membersSectionHeaderCandidates():
-        row = _findSectionHeaderRow(usernames, sectionName)
-        if row:
-            return row
-    return None
-
-
-def _sectionBoundsByHeader(usernames: list, sectionName: str) -> Optional[tuple[int, int]]:
-    headerRow = _findSectionHeaderRow(usernames, sectionName)
-    if not headerRow:
-        return None
-
-    sectionHeaders = {
-        _normalize(item) for item in getattr(config, "recruitmentSectionHeaders", []) if item
-    }
-    if not sectionHeaders:
-        sectionHeaders = {
-            _normalize("High Command"),
-            _normalize("Managers"),
-            _normalize("Employees"),
-            _normalize("Members"),
-        }
-
-    nextHeaderRow: Optional[int] = None
-    for rowIndex in range(headerRow + 1, len(usernames) + 1):
-        row = usernames[rowIndex - 1] if rowIndex - 1 < len(usernames) else []
-        cell = str(row[0]).strip() if row else ""
-        if _normalize(cell) in sectionHeaders:
-            nextHeaderRow = rowIndex
-            break
-
-    startRow = headerRow + 1
-    if startRow - 1 < len(usernames):
-        firstRow = usernames[startRow - 1] if usernames[startRow - 1] else []
-        firstCell = str(firstRow[0]).strip() if firstRow else ""
-        if not firstCell:
-            startRow += 1
-
-    if nextHeaderRow:
-        endRow = nextHeaderRow - 1
-    else:
-        endRow = _detectFooterRow(usernames) - 1
-
-    if endRow - 1 < len(usernames) and endRow >= startRow:
-        lastRow = usernames[endRow - 1] if usernames[endRow - 1] else []
-        lastCell = str(lastRow[0]).strip() if lastRow else ""
-        if not lastCell:
-            endRow -= 1
-
-    if endRow < startRow:
-        return None
-    return startRow, endRow
-
-
-def _sectionHeaderRows(usernames: list) -> list[int]:
-    sectionHeaders = {
-        _normalize(item) for item in getattr(config, "recruitmentSectionHeaders", []) if item
-    }
-    if not sectionHeaders:
-        return []
-    rows: list[int] = []
-    for rowIndex, row in enumerate(usernames, start=1):
-        cell = str(row[0]).strip() if row else ""
-        if _normalize(cell) in sectionHeaders:
-            rows.append(rowIndex)
-    return rows
 
 
 def _ensureSectionSpacerRows(service, usernameCol: str) -> int:
@@ -685,110 +546,14 @@ def _fillSectionColumnsWithZero(
     )
 
 
-def _detectFooterRow(usernames: list) -> int:
-    configured = int(getattr(config, "recruitmentFooterRow", 0) or 0)
-    if configured > 0:
-        return configured
-    for rowIndex in range(len(usernames), 0, -1):
-        row = usernames[rowIndex - 1]
-        cell = str(row[0]).strip() if row else ""
-        if cell:
-            return rowIndex
-    return max(len(usernames), 1)
-
-
-def _membersRankOrderMap() -> Dict[str, int]:
-    order = getattr(config, "recruitmentMembersRankOrder", []) or []
-    if not order:
-        order = ["Lead Recruiter", "Senior Recruiter", "Recruiter"]
-    return {_normalize(rank): idx for idx, rank in enumerate(order)}
-
-
-def _isMembersRank(rank: str) -> bool:
-    return _normalize(rank) in _membersRankOrderMap()
-
-
-def _isHighCommandRank(rank: str) -> bool:
-    rankNorm = _normalize(rank)
-    return rankNorm in {
-        _normalize("Head Recruiter 1 IC"),
-        _normalize("Head Recruiter 2 IC"),
-        _normalize("Head Recruiter 3 IC"),
-        _normalize("Head Recruiter 4 IC"),
-    }
-
-
-def _isManagerRank(rank: str) -> bool:
-    return _normalize(rank) == _normalize("Recruitment Manager")
-
-
-def _normalizeQuotaStatus(value: str) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    allowed = getattr(config, "recruitmentQuotaStatusValues", []) or [
-        "Completed",
-        "Incomplete",
-        "Excused",
-        "Failed",
-        "Exempt",
-    ]
-    byNorm = {_normalize(item): str(item).strip() for item in allowed if str(item).strip()}
-    return byNorm.get(_normalize(raw), "")
-
-
-def _computeQuotaStatus(
-    rank: str,
-    monthlyPoints: int,
-    patrolCount: int,
-    currentQuotaStatus: str,
-) -> str:
-    existing = _normalizeQuotaStatus(currentQuotaStatus)
-    if existing in {"Excused", "Failed"}:
-        return existing
-
-    if _isHighCommandRank(rank):
-        return "Exempt"
-
-    if _isManagerRank(rank):
-        requiredPatrols = int(getattr(config, "recruitmentManagerQuotaPatrols", 4) or 4)
-        return "Completed" if patrolCount >= requiredPatrols else "Incomplete"
-
-    if _isMembersRank(rank):
-        requiredPoints = int(getattr(config, "recruitmentEmployeeQuotaPoints", 4) or 4)
-        return "Completed" if monthlyPoints >= requiredPoints else "Incomplete"
-
-    return existing or "Incomplete"
-
-
-def _resolveConfiguredRankLabel(rankName: str) -> str:
-    target = _normalize(rankName)
-    for item in getattr(config, "recruitmentAllowedRanks", []) or []:
-        if _normalize(item) == target:
-            return str(item).strip()
-    return rankName
-
-
-def _nextPromotionRank(currentRank: str, allTimePoints: int) -> Optional[str]:
-    currentNorm = _normalize(currentRank)
-    recruiterNorm = _normalize("Recruiter")
-    seniorNorm = _normalize("Senior Recruiter")
-    leadNorm = _normalize("Lead Recruiter")
-
-    if currentNorm not in {recruiterNorm, seniorNorm, leadNorm}:
-        return None
-
-    toSeniorAt = int(getattr(config, "recruitmentPromoteRecruiterToSeniorAt", 10) or 10)
-    toLeadAt = int(getattr(config, "recruitmentPromoteSeniorToLeadAt", 20) or 20)
-
-    if allTimePoints >= toLeadAt and currentNorm in {recruiterNorm, seniorNorm}:
-        return _resolveConfiguredRankLabel("Lead Recruiter")
-    if allTimePoints >= toSeniorAt and currentNorm == recruiterNorm:
-        return _resolveConfiguredRankLabel("Senior Recruiter")
-    return None
-
-
-def _insertMissingMemberRow(service, header: Dict[str, str], robloxUsername: str) -> Optional[int]:
+def _insertMissingMemberRow(
+    service,
+    header: Dict[str, str],
+    robloxUsername: str,
+    *,
+    sectionName: Optional[str] = None,
+    rank: Optional[str] = None,
+) -> Optional[int]:
     robloxUsername = _cleanRobloxUsername(robloxUsername)
     if not robloxUsername:
         return None
@@ -806,8 +571,11 @@ def _insertMissingMemberRow(service, header: Dict[str, str], robloxUsername: str
     if not membersHeaderRow:
         return None
 
-    footerRow = _detectFooterRow(usernames)
-    insertRow = max(membersHeaderRow + 2, footerRow)
+    targetSections = [str(sectionName).strip()] if sectionName and str(sectionName).strip() else _membersSectionHeaderCandidates()
+    insertRow = _sectionInsertRow(usernames, targetSections)
+    if not insertRow:
+        footerRow = _detectFooterRow(usernames)
+        insertRow = max(membersHeaderRow + 2, footerRow)
 
     sheetId = _getSheetTabId(service)
 
@@ -831,7 +599,7 @@ def _insertMissingMemberRow(service, header: Dict[str, str], robloxUsername: str
     ).execute()
 
     defaultRank = _resolveConfiguredRankLabel(
-        str(getattr(config, "recruitmentNewMemberRank", "Recruiter") or "Recruiter")
+        str(rank or getattr(config, "recruitmentNewMemberRank", "Recruiter") or "Recruiter")
     )
     defaultStatus = str(getattr(config, "recruitmentNewMemberStatus", "Active") or "Active").strip() or "Active"
     defaultQuota = _computeQuotaStatus(defaultRank, 0, 0, "")
@@ -1261,11 +1029,14 @@ def _roleRankOrderMap() -> Dict[str, int]:
     ordered = [str(item).strip() for item in (getattr(config, "recruitmentAllowedRanks", []) or []) if str(item).strip()]
     if not ordered:
         ordered = [
+            "Commissioner 1 IC",
+            "Comissioner 1 IC",
             "Head Recruiter 1 IC",
             "Head Recruiter 2 IC",
             "Head Recruiter 3 IC",
             "Head Recruiter 4 IC",
             "Recruitment Manager",
+            "Recruitment Supervisor",
             "Lead Recruiter",
             "Senior Recruiter",
             "Recruiter",
@@ -1474,10 +1245,49 @@ def syncRecruitmentRolePlacement(
     )
 
     row = _findRowByRobloxUsername(service, usernameCol, rankCol, username)
+    created = False
+    if not row:
+        if hasAnrorsRmPlusRole:
+            row = _insertMissingMemberRow(
+                service,
+                header,
+                username,
+                sectionName="Managers",
+                rank=_resolveConfiguredRankLabel("Recruitment Manager"),
+            )
+        elif hasAnrorsMemberRole:
+            row = _insertMissingMemberRow(
+                service,
+                header,
+                username,
+                sectionName=_membersSectionHeaderCandidates()[0],
+            )
+        if row:
+            created = True
+            usernames = (
+                service.spreadsheets()
+                .values()
+                .get(spreadsheetId=_spreadsheetId(), range=f"{_sheetName()}!{usernameCol}:{usernameCol}")
+                .execute()
+                .get("values", [])
+            )
+        else:
+            return {
+                "ok": True,
+                "found": False,
+                "created": False,
+                "moved": False,
+                "updated": False,
+                "organized": 0,
+                "hasAnrorsMemberRole": bool(hasAnrorsMemberRole),
+                "hasAnrorsRmPlusRole": bool(hasAnrorsRmPlusRole),
+            }
+
     if not row:
         return {
             "ok": True,
             "found": False,
+            "created": False,
             "moved": False,
             "updated": False,
             "organized": 0,
@@ -1538,6 +1348,7 @@ def syncRecruitmentRolePlacement(
     return {
         "ok": True,
         "found": True,
+        "created": created,
         "moved": moved,
         "updated": updated,
         "organized": organized,
@@ -1586,10 +1397,30 @@ def applyApprovedLog(
         .execute()
         .get("valueRanges", [])
     )
+    currentFormula = (
+        service.spreadsheets()
+        .values()
+        .batchGet(
+            spreadsheetId=_spreadsheetId(),
+            ranges=list(ranges.values()),
+            valueRenderOption="FORMULA",
+        )
+        .execute()
+        .get("valueRanges", [])
+    )
 
     def _at(index: int):
         try:
             values = current[index].get("values", [])
+            if not values or not values[0]:
+                return ""
+            return values[0][0]
+        except Exception:
+            return ""
+
+    def _formulaAt(index: int):
+        try:
+            values = currentFormula[index].get("values", [])
             if not values or not values[0]:
                 return ""
             return values[0][0]
@@ -1601,6 +1432,7 @@ def applyApprovedLog(
     allTime = _toInt(_at(2)) + max(0, int(pointsDelta))
     patrols = _toInt(_at(3)) + max(0, int(patrolDelta))
     currentQuotaStatus = str(_at(4) or "").strip()
+    allTimeFormula = str(_formulaAt(2) or "").strip()
     promotedRank = _nextPromotionRank(currentRank, allTime)
     rankForQuota = promotedRank or currentRank
     quotaStatus = _computeQuotaStatus(rankForQuota, monthly, patrols, currentQuotaStatus)
@@ -1608,10 +1440,11 @@ def applyApprovedLog(
     data = [
         {"range": _range(header["robloxUsername"], row), "values": [[robloxUsername]]},
         {"range": ranges["monthly"], "values": [[monthly]]},
-        {"range": ranges["allTime"], "values": [[allTime]]},
         {"range": ranges["patrols"], "values": [[patrols]]},
         {"range": ranges["quota"], "values": [[quotaStatus]]},
     ]
+    if not allTimeFormula.startswith("="):
+        data.append({"range": ranges["allTime"], "values": [[allTime]]})
     if promotedRank and _normalize(promotedRank) != _normalize(currentRank):
         data.append({"range": ranges["rsRank"], "values": [[promotedRank]]})
     service.spreadsheets().values().batchUpdate(
@@ -1696,6 +1529,39 @@ def _loadWritableMemberRowsByUsername(service, sheetId: str, header: Dict[str, s
     return rowByUsername
 
 
+def listWritableRobloxUsernames() -> list[str]:
+    service = _getService()
+    header = _loadHeaderMap(service)
+    sheetId = _spreadsheetId()
+    usernameCol = header["robloxUsername"]
+    rankCol = header["rsRank"]
+    usernameAndRank = (
+        service.spreadsheets()
+        .values()
+        .batchGet(
+            spreadsheetId=sheetId,
+            ranges=[
+                f"{_sheetName()}!{usernameCol}:{usernameCol}",
+                f"{_sheetName()}!{rankCol}:{rankCol}",
+            ],
+        )
+        .execute()
+        .get("valueRanges", [])
+    )
+    usernames = usernameAndRank[0].get("values", []) if len(usernameAndRank) > 0 else []
+    ranks = usernameAndRank[1].get("values", []) if len(usernameAndRank) > 1 else []
+    out: list[str] = []
+    totalRows = max(len(usernames), len(ranks))
+    for idx in range(1, totalRows + 1):
+        usernameRow = usernames[idx - 1] if idx - 1 < len(usernames) else []
+        rankRow = ranks[idx - 1] if idx - 1 < len(ranks) else []
+        usernameCell = _cleanRobloxUsername(usernameRow[0]) if usernameRow else ""
+        rankCell = str(rankRow[0]).strip() if rankRow else ""
+        if _isWritableMemberRow(usernameCell, rankCell):
+            out.append(usernameCell)
+    return out
+
+
 def _resolveApprovedLogRows(
     service,
     header: Dict[str, str],
@@ -1736,12 +1602,32 @@ def _loadApprovedLogCurrentRows(
         .execute()
         .get("valueRanges", [])
     )
+    fetchedFormulaRanges = (
+        service.spreadsheets()
+        .values()
+        .batchGet(
+            spreadsheetId=sheetId,
+            ranges=perRowRanges,
+            valueRenderOption="FORMULA",
+        )
+        .execute()
+        .get("valueRanges", [])
+    )
 
     currentByRow: dict[int, dict[str, str]] = {}
     for idx, (row, key) in enumerate(rangeMeta):
         values = fetchedRanges[idx].get("values", []) if idx < len(fetchedRanges) else []
         value = values[0][0] if values and values[0] else ""
-        currentByRow.setdefault(row, {})[key] = str(value)
+        rowData = currentByRow.setdefault(row, {})
+        rowData[key] = str(value)
+        formulaValues = (
+            fetchedFormulaRanges[idx].get("values", [])
+            if idx < len(fetchedFormulaRanges)
+            else []
+        )
+        formulaValue = formulaValues[0][0] if formulaValues and formulaValues[0] else ""
+        if isinstance(formulaValue, str) and formulaValue.strip().startswith("="):
+            rowData[f"{key}Formula"] = formulaValue.strip()
     return currentByRow
 
 
@@ -1771,7 +1657,8 @@ def _buildApprovedLogBatchData(
 
         batchData.append({"range": _range(header["robloxUsername"], row), "values": [[entry["robloxUsername"]]]})
         batchData.append({"range": _range(header["monthly"], row), "values": [[monthly]]})
-        batchData.append({"range": _range(header["allTime"], row), "values": [[allTime]]})
+        if not str(current.get("allTimeFormula", "")).strip().startswith("="):
+            batchData.append({"range": _range(header["allTime"], row), "values": [[allTime]]})
         batchData.append({"range": _range(header["patrols"], row), "values": [[patrols]]})
         batchData.append({"range": _range(header["quota"], row), "values": [[quotaStatus]]})
         if promotedRank and _normalize(promotedRank) != _normalize(currentRank):

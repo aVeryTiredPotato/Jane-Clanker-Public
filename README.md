@@ -1,8 +1,5 @@
 # Jane
 
-Reaction roles by idkpine
-
-
 Jane is a Discord bot built for ANRO.
 
 This is not a polished SaaS app or a library. It is a fairly large, somewhat practical bot that grew around real staff workflows, Discord moderation/admin tooling, recruitment, ORBAT work, BG checks, reminders, voice chats, and a pile of internal quality-of-life features.

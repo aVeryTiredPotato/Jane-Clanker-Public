@@ -68,6 +68,7 @@ Optional host/runtime overrides:
 - `CLEAR_GLOBAL_COMMANDS`
 - `CLEAR_GUILD_COMMANDS`
 - `JANE_SUPERVISOR_MANAGED`
+- `JANE_INSTALL_REQUIREMENTS_ON_UPDATE`
 
 ## Path Rules
 
@@ -115,6 +116,7 @@ Jane can:
 
 - check for updates
 - optionally pull from Git
+- install updated `requirements.txt` dependencies before restart
 - restart herself
 
 The detailed updater behavior lives in [Auto Git Update](autoGitUpdate.md).

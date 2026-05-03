@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Optional
 
@@ -7,10 +7,11 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from features.staff.bgItemReview import service as itemReviewService
 from features.staff.bgflags import service as flagService
 from runtime import interaction as interactionRuntime
 from runtime import viewBases as runtimeViewBases
-from features.staff.sessions import roblox
+from features.staff.sessions.Roblox import robloxBadges
 
 _modsOnlyMessage = "Mods only."
 
@@ -100,6 +101,61 @@ def _ruleField(rule: dict) -> tuple[str, str]:
         f"Note: {note if note else '(none)'}"
     )
     return fieldName, fieldValue
+
+
+def _formatVisualRefSyncResult(result: dict) -> str:
+    assetCount = int(result.get("assetCount") or 0)
+    validCount = int(result.get("validatedCount") or 0)
+    invalidCount = int(result.get("invalidCount") or 0)
+    errorCount = int(result.get("errorCount") or 0)
+    pendingCount = int(result.get("pendingCount") or 0)
+    checkedCount = int(result.get("checkedCount") or 0)
+    removedCount = int(result.get("removedCount") or 0)
+    parts = [
+        f"assets={assetCount}",
+        f"valid={validCount}",
+        f"invalid={invalidCount}",
+        f"errors={errorCount}",
+    ]
+    if pendingCount > 0:
+        parts.append(f"pending={pendingCount}")
+    if checkedCount > 0:
+        parts.append(f"checked={checkedCount}")
+    if removedCount > 0:
+        parts.append(f"removed={removedCount}")
+    issues = [str(value).strip() for value in list(result.get("sampleIssues") or []) if str(value).strip()]
+    if issues:
+        parts.append("issues=" + "; ".join(issues[:3]))
+    return ", ".join(parts)
+
+
+def _buildQueueFlagEmbed(queueRows: list[dict]) -> discord.Embed:
+    embed = discord.Embed(
+        title="Queued Item Flags",
+        description="Reviewer-flagged queue items that now feed visual matching.",
+        color=discord.Color.blurple(),
+    )
+    if not queueRows:
+        embed.add_field(name="Items", value="No flagged queue items found.", inline=False)
+        return embed
+
+    lines: list[str] = []
+    for row in queueRows[:15]:
+        queueId = int(row.get("queueId") or 0)
+        assetId = int(row.get("assetId") or 0)
+        assetName = str(row.get("assetName") or f"Asset {assetId}").strip() or f"Asset {assetId}"
+        creatorName = str(row.get("creatorName") or "unknown").strip() or "unknown"
+        reviewNote = str(row.get("reviewNote") or "").strip()
+        line = f"`#{queueId}` `{assetId}` {assetName} | {creatorName}"
+        if reviewNote:
+            trimmedNote = reviewNote if len(reviewNote) <= 80 else reviewNote[:77].rstrip() + "..."
+            line += f"\n{trimmedNote}"
+        lines.append(line)
+
+    embed.add_field(name="Flagged Queue Items", value="\n".join(lines)[:1024], inline=False)
+    if len(queueRows) > 15:
+        embed.set_footer(text=f"Showing 15 of {len(queueRows)} flagged queue items.")
+    return embed
 
 
 class BgRulesPanelView(discord.ui.View):
@@ -272,6 +328,20 @@ class BgFlagAddRuleModal(discord.ui.Modal, title="Add BG Flag Rule"):
                     ephemeral=True,
                 )
                 return
+
+        if normalizedRuleType == "item":
+            await interactionRuntime.safeInteractionDefer(interaction, ephemeral=True)
+            validation = await flagService.validateItemVisualReference(int(normalizedValue))
+            validationState = str(validation.get("validationState") or "").strip().upper()
+            if validationState != "VALID":
+                errorText = str(validation.get("validationError") or "").strip() or "Item thumbnail validation failed."
+                await interactionRuntime.safeInteractionReply(
+                    interaction,
+                    content=f"Jane could not validate item `{normalizedValue}` as a usable visual reference. {errorText}",
+                    ephemeral=True,
+                )
+                return
+
         ruleId = await flagService.addRule(
             normalizedRuleType,
             normalizedValue,
@@ -280,9 +350,13 @@ class BgFlagAddRuleModal(discord.ui.Modal, title="Add BG Flag Rule"):
             severityValue,
         )
         severityText = f" with severity {severityValue}" if severityValue > 0 else ""
+        extraText = ""
+        if normalizedRuleType == "item":
+            syncResult = await flagService.syncItemVisualReferences(force=False)
+            extraText = f" Visual refs synced: {_formatVisualRefSyncResult(syncResult)}."
         await interactionRuntime.safeInteractionReply(
             interaction,
-            content=f"Added {normalizedRuleType} rule #{ruleId}{severityText}.",
+            content=f"Added {normalizedRuleType} rule #{ruleId}{severityText}.{extraText}",
             ephemeral=True,
         )
 
@@ -309,10 +383,17 @@ class BgFlagRemoveRuleModal(discord.ui.Modal, title="Remove BG Flag Rule"):
             )
             return
 
+        existingRule = await flagService.getRule(parsedRuleId)
+        removedRuleType = str((existingRule or {}).get("ruleType") or "").strip().lower()
         await flagService.removeRule(parsedRuleId)
+        extraText = ""
+        if removedRuleType == "item":
+            await interactionRuntime.safeInteractionDefer(interaction, ephemeral=True)
+            syncResult = await flagService.syncItemVisualReferences(force=False)
+            extraText = f" Visual refs synced: {_formatVisualRefSyncResult(syncResult)}."
         await interactionRuntime.safeInteractionReply(
             interaction,
-            content=f"Removed rule #{parsedRuleId}.",
+            content=f"Removed rule #{parsedRuleId}.{extraText}",
             ephemeral=True,
         )
 
@@ -391,7 +472,7 @@ class BgFlagImportBadgesModal(discord.ui.Modal, title="Import Badge Rules"):
 
         while added < limit:
             pageLimit = min(batchSize, limit - added)
-            result = await roblox.fetchRobloxUniverseBadges(
+            result = await robloxBadges.fetchRobloxUniverseBadges(
                 parsedUniverseId,
                 limit=pageLimit,
                 cursor=cursor,
@@ -490,6 +571,33 @@ class BgFlagPanelView(discord.ui.View):
             BgFlagImportBadgesModal(),
         )
 
+    @discord.ui.button(label="Sync Visual Refs", style=discord.ButtonStyle.secondary, row=1)
+    async def syncVisualRefsBtn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await _requireModPermission(interaction):
+            return
+        await interactionRuntime.safeInteractionDefer(interaction, ephemeral=True)
+        result = await flagService.syncItemVisualReferences(force=True)
+        await interactionRuntime.safeInteractionReply(
+            interaction,
+            content=f"Visual reference sync complete: {_formatVisualRefSyncResult(result)}.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="List Queue Flags", style=discord.ButtonStyle.secondary, row=1)
+    async def listQueueFlagsBtn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await _requireModPermission(interaction):
+            return
+        queueRows = await itemReviewService.listQueueEntriesByStatus(
+            [itemReviewService.STATUS_FLAGGED],
+            guildId=int(interaction.guild_id or 0) or None,
+            limit=15,
+        )
+        await interactionRuntime.safeInteractionReply(
+            interaction,
+            embed=_buildQueueFlagEmbed(queueRows),
+            ephemeral=True,
+        )
+
 
 class BgFlagCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -506,6 +614,7 @@ class BgFlagCog(commands.Cog):
                 "Use the panel buttons below to manage background-check flags.\n"
                 "Optional severity is a 1-100 minimum score for direct user rules. "
                 "Leave it blank for Jane's default.\n"
+                "Exact `item` rules also feed Jane's visual thumbnail matcher, so new item IDs must resolve to a valid Roblox thumbnail.\n"
                 "Supported rule types:\n"
                 "`group`, `username`, `roblox_user`, `watchlist`, `banned_user`, "
                 "`keyword`, `group_keyword`, `item_keyword`, `game_keyword`, "

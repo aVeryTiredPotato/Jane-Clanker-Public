@@ -12,6 +12,7 @@ _coreExtensionNames = [
     "cogs.staff.divisionClockinCog",
     "cogs.staff.cohostCog",
     "cogs.staff.recruitmentCog",
+    "cogs.staff.bgItemReviewCog",
     "cogs.staff.bgFlagCog",
     "cogs.staff.bgIntelligenceCog",
     "cogs.applicationsCog",

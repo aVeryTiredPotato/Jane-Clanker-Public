@@ -1,12 +1,19 @@
-# Credit to MintFlavour(@koni_mint)
 from __future__ import annotations
+
 from typing import Any
+
 import discord
+
 from runtime import viewBases as runtimeViewBases
+
 
 class ReminderSnoozeView(runtimeViewBases.OwnerLockedView):
     def __init__(self, *, cog: Any, reminderId: int, userId: int) -> None:
-        super().__init__(openerId=userId, timeout=86400, ownerMessage="Only the reminder owner can snooze this reminder.")
+        super().__init__(
+            openerId=userId,
+            timeout=86400,
+            ownerMessage="Only the reminder owner can snooze this reminder.",
+        )
         self.cog = cog
         self.reminderId = int(reminderId)
 
