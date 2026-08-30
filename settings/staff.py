@@ -380,6 +380,7 @@ honorGuardAllowedRanks = [
 honorGuardPlatoonAllowedRanks = {
     "cmp": [
         "Major",
+        "Captain",
         "Lieutenant",
         "Sergeant",
         "Corporal",

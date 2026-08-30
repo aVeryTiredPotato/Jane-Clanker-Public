@@ -1091,9 +1091,9 @@ def applyApprovedLogsBatch(
     batchDataMember, touchedRowsMember, batchDataPlatoon, touchedRowsPlatoon, organizeAfter = _buildApprovedLogBatchData(columns, platoonColumns, updatesByRowMember, updatesByRowPlatoon, orbatMembers, orbatPlatoon)
 
     _engine.writeRowsColumnsBatch(_memberSheetKey, rows=touchedRowsMember, columnValuesByRow=batchDataMember)
-    if len(touchedRowsPlatoon) > 0:
-        platoonSheetKey = f"honorGuard_platoon_{_normalizeKey(eventPlatoon)}"
-        _engine.writeRowsColumnsBatch(platoonSheetKey, rows=touchedRowsPlatoon, columnValuesByRow=batchDataPlatoon)
+  # if len(touchedRowsPlatoon) > 0:
+  #     platoonSheetKey = f"honorGuard_platoon_{_normalizeKey(eventPlatoon)}"
+  #     _engine.writeRowsColumnsBatch(platoonSheetKey, rows=touchedRowsPlatoon, columnValuesByRow=batchDataPlatoon)
 
     if organizeAfter:
         _organizeHonorGuardMembers(rankBounds=rankBounds, batchDataMember=batchDataMember)
